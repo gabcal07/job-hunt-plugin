@@ -85,7 +85,7 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
    - Write `shortlist.md`: a table of every scored job (score, title, company, city, link, why), with ⭐ on the selected ones, followed by a "How I read your settings" line (the `notes`).
 5. **Tailor:** one Sonnet worker per selected job, in parallel, each in `runs/<today>/<company>-<role>/`. Each worker follows `S/references/cv-writing.md`:
    - write `tailored.json`, `letter.json` and `notes.md`
-   - `render.py cv --profile tailored.json --lang L --out cv.pdf [--photo D/profile/sources/photo.jpg]`
+   - `render.py cv --profile tailored.json --lang L --out cv.pdf --photo D/profile/sources/photo.jpg` (always pass it; render.py skips the photo when the file does not exist)
    - `render.py letter --profile tailored.json --letter letter.json --lang L --out cover-letter.pdf`
 
    `L` is the posting's language when `cv_language` is "match"; anything other than fr/en becomes en. Exit code 3 means the CV is over one page: trim it and re-render.

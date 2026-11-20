@@ -1,0 +1,89 @@
+{
+  "name": "Jane Doe",
+  "headline": {
+    "en": "Data / Software Engineer",
+    "fr": "Ingénieure Data / Logiciel"
+  },
+  "summary": {
+    "en": "One or two sentences: who you are and what you look for.",
+    "fr": "Une ou deux phrases : qui vous êtes et ce que vous cherchez."
+  },
+  "photo": "profile/sources/photo.jpg",
+  "contact": {
+    "email": "jane.doe@example.com",
+    "phone": "+00 0 00 00 00 00",
+    "location": "Lyon, France",
+    "linkedin": "www.linkedin.com/in/jane-doe-example",
+    "github": "https://github.com/jane-doe-example"
+  },
+  "languages": [
+    {
+      "name": "French",
+      "level": "Native"
+    },
+    {
+      "name": "English",
+      "level": "B2"
+    }
+  ],
+  "skills": {
+    "Technologies": [
+      "Python / pandas",
+      "SQL"
+    ],
+    "Concepts & practices": [
+      "Data modelling",
+      "CI/CD"
+    ]
+  },
+  "certifications": [
+    "Example Cloud Practitioner (2025)"
+  ],
+  "hobbies": [
+    "Running"
+  ],
+  "experience": [
+    {
+      "id": "acme-data-intern",
+      "title": "Data engineering internship",
+      "company": "Acme Corp",
+      "location": "Lyon, France",
+      "dates": "Feb 2025 - Aug 2025",
+      "tags": [
+        "data-engineering",
+        "python",
+        "sql"
+      ],
+      "bullets": [
+        "Built a daily ingestion pipeline loading 2M rows into the warehouse"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "id": "example-msc",
+      "title": "MSc Computer Science",
+      "school": "Example University",
+      "location": "Lyon, France",
+      "dates": "Sept 2022 - July 2026",
+      "bullets": [
+        "Major in data engineering"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "id": "weather-dashboard",
+      "title": "Weather data dashboard",
+      "date": "Jan 2025",
+      "url": "",
+      "tags": [
+        "data-viz",
+        "python"
+      ],
+      "bullets": [
+        "Streamlit dashboard over 10 years of open weather data"
+      ]
+    }
+  ]
+}

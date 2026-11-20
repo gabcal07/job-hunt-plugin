@@ -1,0 +1,14 @@
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { width: 210mm; min-height: 297mm; font-family: "Lato", "Helvetica Neue", Arial, "Apple SD Gothic Neo", sans-serif;
+  font-size: 10.5pt; line-height: 1.5; color: #222; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.band { background: #0A1F8F; color: #fff; padding: 9mm 18mm 7mm; }
+.band .name { font-size: 18pt; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.band .contact { font-size: 9pt; margin-top: 2mm; display: flex; flex-wrap: wrap; gap: 1mm 6mm; opacity: .95; }
+.body { padding: 12mm 18mm 0; }
+.date { text-align: right; margin-bottom: 8mm; }
+.recipient { margin-bottom: 8mm; font-weight: 700; }
+.subject { font-weight: 700; color: #1A2F8F; margin-bottom: 7mm; }
+.greeting { margin-bottom: 4mm; }
+p.para { margin-bottom: 4mm; text-align: left; }
+.sign { margin-top: 8mm; font-weight: 700; }

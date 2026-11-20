@@ -1,0 +1,9 @@
+{
+  "name": "job-hunt",
+  "version": "0.2.0",
+  "description": "Daily LinkedIn job search matched to your profile, with a tailored CV and cover letter for the best offers.",
+  "author": {
+    "name": "gabcal07"
+  },
+  "keywords": ["job-search", "linkedin", "cv", "cover-letter", "career", "jobs"]
+}

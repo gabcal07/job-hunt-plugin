@@ -1,0 +1,14 @@
+{
+  "name": "job-hunt-marketplace",
+  "owner": {
+    "name": "gabcal07"
+  },
+  "plugins": [
+    {
+      "name": "job-hunt",
+      "source": "./",
+      "description": "Daily LinkedIn job search matched to your profile, with a tailored CV and cover letter for the best offers.",
+      "version": "0.2.0"
+    }
+  ]
+}

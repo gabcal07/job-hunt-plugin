@@ -50,6 +50,16 @@ Example lines in `JOB_SEARCH.md` (add as many as you like):
 | `/job-hunt:settings` | Show or change what you are looking for |
 | `/job-hunt:tailor <LinkedIn job URL>` | Write a CV and cover letter for one offer |
 | `/job-hunt:profile` | Build your profile, or update it with a change |
+| `/job-hunt:canva` | Optional: a polished Canva version of your CV |
+
+## Optional: a Canva version of your CV
+
+The daily CVs are always plain PDFs, so they work for everyone. If you use Canva and want a hand-polished master CV there:
+
+1. Install Canva's plugin: `/plugin install canva@claude-plugins-official`, then sign in to Canva when asked.
+2. Run `/job-hunt:canva`. Claude builds the design from your profile, shows it to you, and saves a PDF plus a link to edit it in Canva.
+
+Any Canva account works for a new design. Filling your own Canva template needs a paid Canva plan. Edits you make by hand in Canva stay in Canva; run `/job-hunt:canva update` after you change your profile.
 
 ## Privacy
 

@@ -1,6 +1,6 @@
 ---
 name: job-hunt
-description: Personal job-search assistant. Reads the user's plain-language JOB_SEARCH.md (contracts, cities, job titles, target companies, offers per day…), searches LinkedIn job postings, scores and shortlists them against the user's profile, and writes a tailored one-page CV and cover letter PDF for the best offers. Also builds the profile from a CV, LinkedIn and notes, and runs a guided setup. Use for "find me jobs", "job hunt", setting up or changing a job search, building or updating a job profile, tailoring a CV or cover letter to an offer, or when the scheduled job-hunt run fires.
+description: Personal job-search assistant. Reads the user's plain-language JOB_SEARCH.md (contracts, cities, job titles, target companies, offers per day…), searches LinkedIn job postings, scores and shortlists them against the user's profile, and writes a tailored one-page CV and cover letter PDF for the best offers. Also builds the profile from a CV, LinkedIn and notes, runs a guided setup, and can make an optional polished Canva version of the CV (via the Canva MCP). Use for "find me jobs", "job hunt", setting up or changing a job search, building or updating a job profile, tailoring a CV or cover letter to an offer, or when the scheduled job-hunt run fires.
 ---
 
 # job-hunt
@@ -40,7 +40,8 @@ D/runs/YYYY-MM-DD/         jobs.json, scores.json, shortlist.md, and one folder 
    Ask for the start date and dealbreakers in plain chat. Fill `S/assets/JOB_SEARCH.template.md` with the answers, write it to `D/JOB_SEARCH.md`, and show it. Tell them: "You can edit this file anytime, or just tell me what to change."
 4. Ask for their CV (a file path, or drag it in), their LinkedIn profile URL, and optionally a notes or portfolio folder. Copy them into `D/profile/sources/`. Then run **build-profile**.
 5. Run **settings** once so they see how their file is understood.
-6. Offer a daily run:
+6. Mention that `/job-hunt:canva` can make a polished Canva version of their CV if they use Canva (optional).
+7. Offer a daily run:
    - Create it with `create_scheduled_task` (desktop) at around 8am, with the prompt "/job-hunt:run". Without the desktop app, use `CronCreate`, or explain how to run `claude -p "/job-hunt:run"` from cron.
    - Tell them to open the task in the app and click **Run now** once to approve its tools.
    - Tell them it only runs while the app is open.
@@ -98,6 +99,17 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
 
 ## Mode: tailor-one (an offer the user found)
 Fetch the posting with `linkedin_search.py`'s detail parser: `python3 $S/scripts/linkedin_search.py --job-url URL --out ...`. If it isn't a LinkedIn URL, read the page with the browser or WebFetch. Score it, then run tailor steps 5–6 for that one job in `runs/<today>/`.
+
+## Mode: canva (optional, on request only; never in a scheduled run)
+Makes one polished **Canva** version of the master CV. The daily tailored CVs always stay HTML/PDF.
+1. **Check the connector.** Look for Canva MCP tools (names containing `create-design`, e.g. `Canva:create-design` or `mcp__Canva__create-design`). If there are none, tell the user to run `/plugin install canva@claude-plugins-official`, sign in to Canva when it asks, and start a new session. Then stop.
+2. **Choose the starting point.** Ask:
+   - **New design** (any Canva account): call `create-design` with a resume/CV brief. The brief contains the profile content **verbatim** from `D/profile/profile.json`: name, headline, summary, contact, experience, education, the top 4 projects, skills, languages and certifications. Add the style the user wants, for example "two columns, deep blue sidebar like my current CV". If no widget appears, poll `get-create-design-async-job`.
+   - **My own Canva template** (paid plan, a Brand Template with data fields): `search-brand-templates` → `get-brand-template-dataset` → map the profile fields onto it → `autofill-design`.
+   - **Update my existing Canva CV**: use `design_id` from `D/profile/canva.json` (or `search-designs`), then `start-editing-transaction` → `find_and_replace_text` / `replace_text` from profile.json → show the thumbnail and what changed → `commit-editing-transaction` only after the user says yes.
+3. **Check the content.** Read it back with `read-design` or the transaction content. Every text in the design must come from profile.json, with nothing invented or reworded into new claims. Fix any differences before delivering.
+4. **Deliver.** Run `export-design` to PDF, saving to `D/profile/master-canva.pdf`, and give the Canva edit link. Save `{"design_id", "edit_url", "updated"}` to `D/profile/canva.json` so the next "update my Canva CV" edits the same design.
+5. Tell the user that edits they make in Canva by hand don't flow back into profile.json, because profile.json stays the source of truth.
 
 ## Safety
 - Read-only on LinkedIn: no applying, messaging or connecting. Requests are polite and stop when blocked.

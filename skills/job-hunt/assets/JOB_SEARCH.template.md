@@ -20,9 +20,11 @@ Write naturally: lists can be as long as you like, sentences are fine, and you c
 - machine learning engineer
 - data engineer
 
-## Target companies
-<!-- Searched on purpose, and given a big bonus when scoring. Delete this section if you don't have any. -->
-- Mistral AI
+## Companies to watch
+<!-- Their careers sites are checked every run, after LinkedIn, and they get a bonus when ranking.
+     The careers page link is optional: Claude finds it if you leave it out. -->
+- Mistral AI — https://mistral.ai/careers
+- Doctolib
 
 ## Companies I'm curious about
 <!-- No dedicated search, just a small bonus when they show up. -->

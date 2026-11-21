@@ -7,6 +7,10 @@ import argparse
 import copy
 import json
 import sys
+if sys.version_info < (3, 10):
+    sys.exit("Python 3.10 or newer is needed: install it from python.org (Windows: also `winget install Python.Python.3.12`).")
+for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
+    _s.reconfigure(encoding="utf-8", errors="replace")
 
 LEVELS = "1 intern, 2 entry, 3 associate, 4 mid-senior, 5 director, 6 executive"
 JOB_TYPES = "FPCTIVO"

@@ -4,19 +4,21 @@ Your daily job search, done for you by Claude.
 
 ## What it does
 
-- Searches LinkedIn job postings every day for the kind of job you want.
+- Searches LinkedIn every day for the kind of job you want, plus the careers sites of the companies you choose to watch.
 - Matches each offer to your profile and keeps the best ones in a short list.
 - Writes a tailored one-page CV and cover letter (PDF) for each top offer.
 
 ## Install
 
-1. Open Claude Code (the desktop app or the command-line version) and make sure Google Chrome is installed.
+1. Open Claude Code (the desktop app or the command-line version) on Mac, Windows 11 or Linux. You need **Google Chrome** and **Python 3.10 or newer**. On Windows, run `winget install Python.Python.3.12`. On a Mac, Python usually comes with Claude's developer tools; otherwise `brew install python`. Setup checks both for you.
 2. Run these two commands, one after the other:
 
 ```
 /plugin marketplace add gabcal07/job-hunt-plugin
 /plugin install job-hunt@job-hunt-marketplace
 ```
+
+3. Optional but recommended: install Lightpanda, a fast browser the plugin uses to read web pages. On a Mac, type `brew install lightpanda` in Terminal; on Linux or Windows (WSL), download it from lightpanda.io. Then restart Claude. Without it, Google Chrome is used instead.
 
 ## Start
 
@@ -39,7 +41,7 @@ Example lines in `JOB_SEARCH.md` (add as many as you like):
 - `Cities: Paris, Lyon, also remote in France`
 - `Contract: CDI, alternance`
 - under `## Job titles to search`: one title per line
-- under `## Target companies`: companies to search on purpose
+- under `## Companies to watch`: companies whose careers sites are checked every day, e.g. `- Doctolib — https://careers.doctolib.com` (the link is optional)
 
 ## Commands
 

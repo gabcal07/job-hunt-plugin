@@ -11,6 +11,10 @@ Exit 2 = input not JSON, 3 (and "PAGES=<n>" on stderr) = CV longer than one page
 import argparse, json, os, re, shutil, subprocess, sys
 from html import escape as e
 from pathlib import Path
+if sys.version_info < (3, 10):
+    sys.exit("Python 3.10 or newer is needed: install it from python.org (Windows: also `winget install Python.Python.3.12`).")
+for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
+    _s.reconfigure(encoding="utf-8", errors="replace")
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 LABELS = {

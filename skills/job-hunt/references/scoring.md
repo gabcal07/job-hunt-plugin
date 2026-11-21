@@ -13,10 +13,12 @@ Score every job against `profile/profile.json` + `state/settings.json`. Use only
 
 **Hard zero (score 0, reason given)**: matches a dealbreaker in `preferences`, an exclusion slipped through, requires a visa/clearance the profile can't get, internship/alternance when not in `contract_types`, or the description is empty.
 
-**Bonuses** (cap at 100): +10 if the company is in `target_companies`, +5 if it is in `bonus_companies`. Apply `preferences` (free text) as preferences (±5) or as dealbreakers (hard zero) depending on how they are worded.
+**Bonuses** (cap at 100): +10 if the company is in `target_companies` (companies to watch), +5 if it is in `bonus_companies`. Apply `preferences` (free text) as preferences (±5) or as dealbreakers (hard zero) depending on how they are worded.
 
 **Penalties**: −10 if it's a staffing agency with a vague client, −10 if the salary is stated below `salary_min`, −5 if there are more than 200 applicants.
 
 Output per job, one line in a JSON array:
 `{"id": "...", "score": 0-100, "lang": "fr|en", "why": "≤25 words", "matched": ["skill", ...], "gaps": ["skill", ...]}`
 `lang` is the language the posting is written in (it drives the CV language when `cv_language: match`).
+
+Jobs come from LinkedIn (`source` missing) or from company careers sites (`source: "careers"`). Score them the same way. Careers postings often leave out the contract or seniority: infer them from the text, and don't penalise a field that's simply missing.

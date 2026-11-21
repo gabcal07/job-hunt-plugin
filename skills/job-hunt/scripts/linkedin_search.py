@@ -18,6 +18,10 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
 from html.parser import HTMLParser
+if sys.version_info < (3, 10):
+    sys.exit("Python 3.10 or newer is needed: install it from python.org (Windows: also `winget install Python.Python.3.12`).")
+for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
+    _s.reconfigure(encoding="utf-8", errors="replace")
 
 BASE = "https://www.linkedin.com/jobs-guest/jobs/api/"
 HEADERS = {
@@ -127,16 +131,20 @@ class Client:
     def __init__(self):
         self.last = False
 
-    def get(self, url):
+    def get(self, url, accept=None):
         if self.last:
             time.sleep(random.uniform(1.5, 3.5))
         self.last = True
-        for attempt in (0, 1):
+        hops, attempt = 0, 0
+        while True:
             try:
-                req = urllib.request.Request(url, headers=HEADERS)
+                req = urllib.request.Request(url, headers=dict(HEADERS, Accept=accept) if accept else HEADERS)
                 with urllib.request.urlopen(req, timeout=30) as r:
                     return r.read().decode("utf-8", "replace")
             except urllib.error.HTTPError as e:
+                if e.code == 308 and e.headers.get("Location") and hops < 5:  # py3.9 urllib does not follow 308
+                    url, hops = urllib.parse.urljoin(url, e.headers["Location"]), hops + 1
+                    continue
                 if e.code not in BLOCK_CODES:
                     if e.code == 404:
                         return ""
@@ -145,6 +153,7 @@ class Client:
                     raise Blocked("HTTP %d twice in a row" % e.code)
                 print("warning: HTTP %d, waiting %ds then retrying once" % (e.code, RETRY_WAIT), file=sys.stderr)
                 time.sleep(RETRY_WAIT)
+                attempt = 1
 
 
 def hours(h):
@@ -184,7 +193,7 @@ def run(a, cfg, specs):
     seen = {}
     if a.seen:
         try:
-            with open(a.seen) as f:
+            with open(a.seen, encoding="utf-8") as f:
                 seen = json.load(f)
         except FileNotFoundError:
             pass
@@ -242,7 +251,7 @@ def run(a, cfg, specs):
         today = date.today().isoformat()
         for j in jobs:
             seen.setdefault(j["id"], today)
-        with open(a.seen, "w") as f:
+        with open(a.seen, "w", encoding="utf-8") as f:
             json.dump(seen, f, indent=1)
 
     return {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocked": blocked,

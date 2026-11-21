@@ -93,8 +93,9 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
 ## Mode: run (the scheduled job; arguments may override for this run only)
 1. **Settings:** do the settings steps 1–2. If the file has no titles or no cities, stop and report.
 2. **Search:** `python3 $S/scripts/linkedin_search.py --settings D/state/settings.json --seen D/state/seen.json --out D/runs/<today>/jobs.json`
-   - If the output says `"blocked": true`, continue with what was collected and say so. Never retry in a loop.
-   - For jobs with an empty `description`, open the URL following the browser rule. If that fails too, drop the job.
+   - The script is slow on purpose: LinkedIn limits requests per IP, so it waits 4–8 s between requests and cools down after a block. Expect 3–6 minutes. Run it with a long timeout (10 minutes) or in the background, and never fire LinkedIn requests in parallel from other tools while it runs.
+   - `"search_cut_short": true` means some searches were skipped; say so in the report. `"blocked": true` means descriptions stopped too. In both cases continue with what was collected. Never retry the script in a loop.
+   - For jobs still missing a `description`, read at most 10 of them following the browser rule, **one at a time with a pause of about 10 s** (the browser uses the same IP, so it hits the same limit). Never batch them in parallel. If pages start coming back empty, stop and drop the rest of those jobs. Prefer the jobs with the best title match.
 2b. **Companies to watch:** if `D/state/companies.json` is missing or out of date with `## Companies to watch`, sync it first. For a new company without a URL, find its careers page and run `careers.py detect` on it.
    - Run `python3 $S/scripts/careers.py fetch --companies D/state/companies.json --settings D/state/settings.json --seen D/state/seen.json --out D/runs/<today>/careers.json`.
    - For each company in `needs_browser`:

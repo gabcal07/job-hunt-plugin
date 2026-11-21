@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Polite, read-only LinkedIn job collector using the public guest endpoints (no login).
 
-Stdlib only, Python 3.9+. Stops for good on a repeated 429/999/403 and flags "blocked".
+Stdlib only, Python 3.10+. Paces LinkedIn requests 4-8 s apart; on 429/999/403 cools down 60 s then 180 s.
+If the search phase is still blocked it waits once more and fetches descriptions for what it found
+("search_cut_short": true); a block while fetching descriptions stops everything ("blocked": true).
 
 Usage: linkedin_search.py (--settings PATH | --query Q --location L) [--max-total N] [--out FILE] [--dry-run]
 """
@@ -31,6 +33,9 @@ HEADERS = {
 }
 BLOCK_CODES = (429, 999, 403)
 RETRY_WAIT = 20
+# LinkedIn rate-limits per IP: pause between requests, cool down on a block, then give up
+LINKEDIN_PAUSE = (4.0, 8.0)
+COOLDOWNS = (60, 180)
 
 
 class Blocked(Exception):
@@ -128,12 +133,12 @@ def parse_detail(html_text):
 
 
 class Client:
-    def __init__(self):
-        self.last = False
+    def __init__(self, pause=(1.5, 3.5), cooldowns=(RETRY_WAIT,)):
+        self.last, self.pause, self.cooldowns = False, pause, cooldowns
 
     def get(self, url, accept=None):
         if self.last:
-            time.sleep(random.uniform(1.5, 3.5))
+            time.sleep(random.uniform(*self.pause))
         self.last = True
         hops, attempt = 0, 0
         while True:
@@ -149,11 +154,12 @@ class Client:
                     if e.code == 404:
                         return ""
                     raise
-                if attempt:
-                    raise Blocked("HTTP %d twice in a row" % e.code)
-                print("warning: HTTP %d, waiting %ds then retrying once" % (e.code, RETRY_WAIT), file=sys.stderr)
-                time.sleep(RETRY_WAIT)
-                attempt = 1
+                if attempt >= len(self.cooldowns):
+                    raise Blocked("HTTP %d after %d cool-downs" % (e.code, attempt))
+                wait = self.cooldowns[attempt]
+                print("warning: HTTP %d, cooling down %ds then retrying" % (e.code, wait), file=sys.stderr)
+                time.sleep(wait)
+                attempt += 1
 
 
 def hours(h):
@@ -197,8 +203,8 @@ def run(a, cfg, specs):
                 seen = json.load(f)
         except FileNotFoundError:
             pass
-    cli = Client()
-    searches, per_search, ids, blocked = [], [], set(), False
+    cli = Client(LINKEDIN_PAUSE, COOLDOWNS)
+    searches, per_search, ids, blocked, search_cut = [], [], set(), False, False
     excl_kw = [k.lower() for k in a.exclude_keyword]
     excl_co = [c.lower() for c in a.exclude_company]
     targets = cfg.get("target_companies", [])
@@ -232,11 +238,15 @@ def run(a, cfg, specs):
             searches[-1]["found"] = found
     except Blocked as e:
         blocked = True
-        print("WARNING: LinkedIn blocked us (%s). Stopping all requests; keeping what was gathered." % e, file=sys.stderr)
+        print("WARNING: LinkedIn blocked the search (%s). Keeping the results so far." % e, file=sys.stderr)
 
     # interleave searches so max-total does not starve later ones
     jobs = [j for j in itertools.chain.from_iterable(itertools.zip_longest(*per_search)) if j][: a.max_total]
-    if not a.no_details and not blocked:
+    if not a.no_details:
+        if blocked:  # search was cut short: cool down once, then still try the descriptions we need
+            print("cooling down %ds before fetching descriptions" % COOLDOWNS[-1], file=sys.stderr)
+            time.sleep(COOLDOWNS[-1])
+            blocked, search_cut = False, True
         try:
             for j in jobs:
                 j.update(parse_detail(cli.get(BASE + "jobPosting/" + j["id"])))
@@ -254,7 +264,7 @@ def run(a, cfg, specs):
         with open(a.seen, "w", encoding="utf-8") as f:
             json.dump(seen, f, indent=1)
 
-    return {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocked": blocked,
+    return {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocked": blocked, "search_cut_short": search_cut,
             "searches": searches, "jobs": jobs}
 
 
@@ -321,7 +331,7 @@ def main():
             p.error("--job-url: no LinkedIn job id found in %r" % a.job_url)
         jid = m.group(1)
         job = {"id": jid, "url": "https://www.linkedin.com/jobs/view/" + jid}
-        page = Client().get(BASE + "jobPosting/" + jid)
+        page = Client(LINKEDIN_PAUSE, COOLDOWNS).get(BASE + "jobPosting/" + jid)
         job.update(parse_detail(page))
         # shortcut: top-card regexes for the one-off mode only; search mode gets these from cards
         for k, rx in (("title", r'topcard__title[^>]*>([^<]+)'), ("company", r'topcard__org-name-link[^>]*>\s*([^<]+)'),

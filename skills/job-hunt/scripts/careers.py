@@ -4,7 +4,7 @@
 Stdlib only, Python 3.9+. Reuses the polite Client of linkedin_search.py.
 
 Usage:
-  careers.py detect URL
+  careers.py detect URL [--name COMPANY]
   careers.py fetch --companies companies.json --settings settings.json [--seen seen.json] --out careers.json [--dry-run]
   careers.py --self-test
 """
@@ -22,7 +22,7 @@ for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
     _s.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from linkedin_search import Blocked, Client  # noqa: E402
+from linkedin_search import Blocked, Client, job_key  # noqa: E402
 
 JSON = "application/json"
 REMOTE_WORDS = ("remote", "télétravail", "teletravail", "anywhere")
@@ -34,7 +34,22 @@ NO_TOKEN = {"www", "api", "careers", "jobs", "app", "support", "help", "blog", "
 
 # ---------- detection ----------
 
-def feed_for(platform, token, eu=False):
+# Amazon's search.json ignores loc_query; only country=<ISO3> filters (checked 2026-11-21)
+COUNTRY_ISO3 = {"france": "FRA", "south korea": "KOR", "korea": "KOR", "germany": "DEU", "united kingdom": "GBR", "uk": "GBR",
+                "spain": "ESP", "italy": "ITA", "netherlands": "NLD", "belgium": "BEL", "switzerland": "CHE", "ireland": "IRL",
+                "luxembourg": "LUX", "japan": "JPN", "singapore": "SGP", "united states": "USA", "usa": "USA", "canada": "CAN",
+                "portugal": "PRT", "poland": "POL", "sweden": "SWE", "india": "IND"}
+
+
+def amazon_url(query, country="", offset=0):
+    p = [("base_query", query), ("result_limit", 100), ("offset", offset)] + ([("country", country)] if country else [])
+    return "https://www.amazon.jobs/en/search.json?" + urllib.parse.urlencode(p)
+
+
+def feed_for(platform, token, eu=False, careers_url=None):
+    if platform == "amazon":  # token = the search query; the careers URL's location rides along in the feed URL
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(careers_url or "").query)
+        return amazon_url(token)
     return {
         "greenhouse": "https://boards-api.greenhouse.io/v1/boards/%s/jobs?content=true",
         "lever": "https://api.%slever.co/v0/postings/%%s?mode=json" % ("eu." if eu else ""),
@@ -51,6 +66,8 @@ def detect_url(url):
     host, parts = (u.hostname or "").lower(), [x for x in u.path.split("/") if x]
     q = urllib.parse.parse_qs(u.query)
     first = parts[0] if parts else None
+    if host == "amazon.jobs" or host.endswith(".amazon.jobs"):
+        return "amazon", (q.get("base_query") or [""])[0], False
     if re.fullmatch(r"(job-)?boards(\.eu)?\.greenhouse\.io", host):
         t = (q.get("for") or [None])[0] if first == "embed" else first
         return ("greenhouse", t, False) if t else ("other", None, False)
@@ -80,11 +97,42 @@ def detect_url(url):
     return "other", None, False
 
 
-def detect(url, client=None):
+def token_candidates(name, url):
+    """Board tokens to guess: the company name squashed / dashed, then the URL's host label (www.coupang.jobs -> coupang)."""
+    n = " ".join((name or "").lower().split())
+    labels = (urllib.parse.urlparse(url if "//" in url else "//" + url).hostname or "").lower().split(".")
+    while len(labels) > 1 and labels[0] in ("www", "careers", "jobs"):
+        labels.pop(0)
+    out = []
+    for t in (n.replace(" ", ""), n.replace(" ", "-"), labels[0] if len(labels) > 1 else ""):
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def probe_boards(cands, cli, limit=8):
+    """First (platform, token, eu) whose public feed answers 200 with at least one job; at most `limit` requests."""
+    n = 0
+    for t in cands:
+        for plat, eu in (("greenhouse", False), ("ashby", False), ("lever", False), ("lever", True)):
+            if n >= limit:
+                return None
+            n += 1
+            try:
+                d = json.loads(cli.get(feed_for(plat, t, eu).replace("?content=true", ""), accept=JSON) or "null")
+            except Exception:
+                continue
+            if (d.get("jobs") if isinstance(d, dict) else d):
+                return plat, t, eu
+    return None
+
+
+def detect(url, client=None, name=""):
     plat, tok, eu = detect_url(url)
+    cli = client or Client()
     if plat == "other":
         try:  # look for an embedded or linked board in the careers page itself
-            page = (client or Client()).get(url, accept="text/html")
+            page = cli.get(url, accept="text/html")
         except Exception as e:
             print("warning: could not fetch %s: %s" % (url, e), file=sys.stderr)
             page = ""
@@ -93,7 +141,16 @@ def detect(url, client=None):
             if p2 != "other":
                 plat, tok, eu = p2, t2, e2
                 break
-    return {"platform": plat, "token": tok, "feed_url": feed_for(plat, tok, eu) if tok else None, "careers_url": url}
+        if plat == "other" and "gh_jid" in page:  # job links carry gh_jid: the board token is named somewhere in the page
+            m = re.search(r"(?:job-)?boards\.greenhouse\.io/(?:embed/job_board(?:/js)?\?for=)?([\w-]+)", page)
+            if m and m.group(1) != "embed":
+                plat, tok = "greenhouse", m.group(1)
+        if plat == "other":  # page blocked or empty: guess the board from the company name
+            found = probe_boards(token_candidates(name, url), cli)
+            if found:
+                plat, tok, eu = found
+    return {"platform": plat, "token": tok, "feed_url": feed_for(plat, tok, eu, url) if tok is not None else None,
+            "careers_url": url}
 
 
 # ---------- normalisation ----------
@@ -175,8 +232,21 @@ def n_recruitee(d, t):
                 clean((j.get("description") or "") + " " + (j.get("requirements") or ""))) for j in d.get("offers", [])]
 
 
+def n_amazon(d, t):
+    out = []
+    for j in d.get("jobs", []):
+        try:
+            posted = datetime.strptime(j.get("posted_date") or "", "%B %d, %Y").strftime("%Y-%m-%d")
+        except ValueError:
+            posted = ""
+        desc = clean(" ".join(j.get(k) or "" for k in ("description", "basic_qualifications", "preferred_qualifications")))
+        out.append(job("amazon", t, j["id_icims"], "https://www.amazon.jobs" + (j.get("job_path") or ""), j.get("title"),
+                       j.get("normalized_location") or j.get("location"), posted, desc))
+    return out
+
+
 NORMALISE = {"greenhouse": n_greenhouse, "lever": n_lever, "ashby": n_ashby, "smartrecruiters": n_smartrecruiters,
-             "workable": n_workable, "recruitee": n_recruitee}
+             "workable": n_workable, "recruitee": n_recruitee, "amazon": n_amazon}
 
 
 # ---------- filters ----------
@@ -229,12 +299,12 @@ def excluded(j, cfg):
 
 # ---------- fetch ----------
 
-def fetch_company(co, clients, blocked):
+def fetch_company(co, clients, blocked, cfg):
     """Return normalised (unfiltered) jobs for one company."""
     plat, tok, eu = detect_url(co["feed_url"])
     if plat == "other":
         plat = co.get("platform") or "other"
-    if plat not in NORMALISE or not tok:
+    if plat not in NORMALISE or tok is None:
         raise ValueError("unsupported feed_url %s" % co["feed_url"])
     host = urllib.parse.urlparse(co["feed_url"]).hostname
     if host in blocked:
@@ -251,6 +321,21 @@ def fetch_company(co, clients, blocked):
             raise ValueError("HTTP 404 for %s" % url)
         return json.loads(text)
 
+    if plat == "amazon":  # one search per configured country, merged by job id, paged up to 300 each
+        countries = list(dict.fromkeys(COUNTRY_ISO3.get(s.get("location", "").split(",")[-1].strip().lower(), "")
+                                       for s in cfg.get("searches", [])))
+        countries = [c for c in countries if c] or [""]  # unknown country: unfiltered, location_ok still filters
+        merged = {}
+        for city in countries:
+            part = []
+            while len(part) < 300:
+                data = get_json(amazon_url(tok, city, len(part)))
+                more = NORMALISE[plat](data, tok)
+                part += more
+                if not more or len(part) >= data.get("hits", 0):
+                    break
+            merged.update((j["id"], j) for j in part)
+        return list(merged.values()), get_json
     data = get_json(co["feed_url"])
     jobs = NORMALISE[plat](data, tok)
     if plat == "smartrecruiters":  # paginate (100 per page, small cap)
@@ -282,11 +367,11 @@ def run_fetch(a):
             continue
         found, kept = 0, []
         try:
-            jobs, get_json = fetch_company(co, clients, blocked)
+            jobs, get_json = fetch_company(co, clients, blocked, cfg)
             found = len(jobs)
             for j in jobs:
                 j["company"] = name
-                if (j["id"] in seen or not title_ok(j["title"], groups) or not location_ok(j["location"], cfg)
+                if (j["id"] in seen or job_key(name, j["title"]) in seen or not title_ok(j["title"], groups) or not location_ok(j["location"], cfg)
                         or excluded(j, cfg)):
                     continue
                 if j.get("_detail"):  # description only for jobs that passed the filters
@@ -311,6 +396,7 @@ def run_fetch(a):
         if a.seen:
             for j in out_jobs:
                 seen.setdefault(j["id"], today)
+                seen.setdefault(job_key(j["company"], j["title"]), today)
             with open(a.seen, "w", encoding="utf-8") as f:
                 json.dump(seen, f, indent=1)
     res = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "jobs": out_jobs,
@@ -369,6 +455,24 @@ def self_test():
     j = one("workable", {"jobs": [{"shortcode": "ABC", "title": "ML Engineer", "url": "https://w/ABC", "city": "Paris",
                                    "country": "France", "published_on": "2026-11-05", "description": "<p>Text</p>"}]})
     assert (j["location"], j["posted"], j["description"]) == ("Paris, France", "2026-11-05", "Text"), j
+    am = {"hits": 1, "jobs": [{"id_icims": "10591962", "title": "Systems Engineer", "job_path": "/en/jobs/10591962/systems-engineer",
+          "normalized_location": "Lille, Hauts-de-France, FRA", "posted_date": "October 29, 2026",
+          "description": "Build<br/>things", "basic_qualifications": "<ul><li>Python</li></ul>", "preferred_qualifications": "AWS"}]}
+    j = one("amazon", am)
+    assert (j["id"], j["url"], j["location"], j["posted"], j["description"]) == (
+        "amazon:t:10591962", "https://www.amazon.jobs/en/jobs/10591962/systems-engineer", "Lille, Hauts-de-France, FRA",
+        "2026-10-29", "Build things Python AWS"), j
+    assert detect_url("https://www.amazon.jobs/en/search?base_query=machine+learning+engineer&loc_query=Paris%2C+France") == (
+        "amazon", "machine learning engineer", False)
+    assert detect_url("https://www.amazon.jobs/en/")[:2] == ("amazon", "")
+    assert feed_for("amazon", "ml eng", False, "https://www.amazon.jobs/en/search?base_query=ml+eng&loc_query=Paris%2C+France") == (
+        "https://www.amazon.jobs/en/search.json?base_query=ml+eng&result_limit=100&offset=0")
+    assert amazon_url("ml", "KOR").endswith("&country=KOR")
+    assert detect_url(amazon_url("ml eng", "Paris", 100))[:2] == ("amazon", "ml eng")
+    assert token_candidates("Open AI", "https://www.openai.jobs/x") == ["openai", "open-ai"], token_candidates("Open AI", "https://www.openai.jobs/x")
+    assert token_candidates("Coupang", "https://www.coupang.jobs/en/jobs/") == ["coupang"]
+    assert token_candidates("", "careers.doctolib.com") == ["doctolib"]
+    assert token_candidates("Acme Corp", "https://acme.io") == ["acmecorp", "acme-corp", "acme"]
     j = one("recruitee", {"offers": [{"id": 9, "title": "Data Engineer", "careers_url": "https://r/o/9", "location": "Paris, France",
                                       "published_at": "2026-11-02 09:00:00 UTC", "description": "<div>Desc</div>"}]})
     assert (j["id"], j["posted"], j["description"]) == ("recruitee:t:9", "2026-11-02", "Desc"), j
@@ -403,6 +507,7 @@ def main():
     sub = p.add_subparsers(dest="cmd")
     d = sub.add_parser("detect", help="print the platform, token and feed URL for a careers URL")
     d.add_argument("url")
+    d.add_argument("--name", default="", help="company name, used to guess the board when the page gives nothing")
     f = sub.add_parser("fetch", help="fetch, normalise and filter every company's feed")
     f.add_argument("--companies", required=True)
     f.add_argument("--settings", required=True)
@@ -413,7 +518,7 @@ def main():
     if a.self_test:
         return self_test()
     if a.cmd == "detect":
-        print(json.dumps(detect(a.url), ensure_ascii=False))
+        print(json.dumps(detect(a.url, name=a.name), ensure_ascii=False))
     elif a.cmd == "fetch":
         run_fetch(a)
     else:

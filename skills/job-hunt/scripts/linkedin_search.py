@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timezone
 from html.parser import HTMLParser
+import unicodedata
 if sys.version_info < (3, 10):
     sys.exit("Python 3.10 or newer is needed: install it from python.org (Windows: also `winget install Python.Python.3.12`).")
 for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
@@ -162,6 +163,16 @@ class Client:
                 attempt += 1
 
 
+GENDER = re.compile(r"\((?:h/f|f/h|m/f|f/m|x/f/m|f/m/x|m/w/d|h/f/x|f/h/d|w/m/d|m/f/d|hf|fh)\)|\b(?:h/f|f/h|m/f|f/m)\b")
+
+
+def job_key(company, title):
+    """Same job across sites and days: company + title, lowercased, accents and gender markers removed."""
+    f = lambda x: unicodedata.normalize("NFD", (x or "").lower()).encode("ascii", "ignore").decode()
+    t = re.sub(r"[^a-z0-9]+", " ", GENDER.sub(" ", f(title))).strip()
+    return "k:" + re.sub(r"[^a-z0-9]+", "", f(company)) + ":" + t
+
+
 def hours(h):
     """Monday: widen 24h to 72h so the weekend is covered."""
     return 72 if h == 24 and date.today().weekday() == 0 else h
@@ -228,7 +239,7 @@ def run(a, cfg, specs):
                     break
                 for c in cards[: a.max_per_search - found]:
                     found += 1
-                    if c["id"] in ids or c["id"] in seen or excluded(c):
+                    if c["id"] in ids or c["id"] in seen or job_key(c["company"], c["title"]) in seen or excluded(c):
                         continue
                     ids.add(c["id"])
                     c["search_why"] = why
@@ -261,6 +272,7 @@ def run(a, cfg, specs):
         today = date.today().isoformat()
         for j in jobs:
             seen.setdefault(j["id"], today)
+            seen.setdefault(job_key(j["company"], j["title"]), today)
         with open(a.seen, "w", encoding="utf-8") as f:
             json.dump(seen, f, indent=1)
 
@@ -283,6 +295,8 @@ SAMPLE_DETAIL = """<div><figcaption class="num-applicants__caption">Be among the
 
 
 def self_test():
+    assert job_key("Theodo", "AI Engineer (H/F)") == job_key("theodo ", "AI engineer") == "k:theodo:ai engineer"
+    assert job_key("Doctolib", "ML Engineer (x/f/m)") == job_key("Doctolib", "ML engineer")
     (c,) = parse_cards(SAMPLE_CARD)
     assert c == {"id": "123456", "url": "https://fr.linkedin.com/jobs/view/ml-engineer-123456", "title": "ML Engineer",
                  "company": "Acme & Co", "location": "Paris, France", "posted": "2026-11-19"}, c

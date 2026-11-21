@@ -6,7 +6,7 @@ Your daily job search, done for you by Claude.
 
 - Searches LinkedIn every day for the kind of job you want, plus the careers sites of the companies you choose to watch.
 - Matches each offer to your profile and keeps the best ones in a short list.
-- Writes a tailored one-page CV and cover letter (PDF) for each top offer.
+- Writes a tailored one-page CV and cover letter for each top offer (the CV as PDF and Word DOCX, the letter as PDF). The CV uses a plain single-column layout that applicant tracking systems (ATS) read reliably. The cover letter is checked for AI-sounding phrasing and stripped of hidden characters and file metadata.
 
 ## Install
 
@@ -43,6 +43,10 @@ Example lines in `JOB_SEARCH.md` (add as many as you like):
 - under `## Job titles to search`: one title per line
 - under `## Companies to watch`: companies whose careers sites are checked every day, e.g. `- Doctolib — https://careers.doctolib.com` (the link is optional)
 
+## Credits
+
+Bundled, unmodified, under their MIT licences: [humanizer](https://github.com/blader/humanizer) (Siqi Chen), and [clean-user-facing-text, remove-ai-marks and the watermarks-remover service](https://github.com/guillaumemeyer/watermarks-remover) (Guillaume Meyer). See each folder's `SOURCE.md`.
+
 ## Commands
 
 | Command | What it does |
@@ -64,6 +68,8 @@ The daily CVs are always plain PDFs, so they work for everyone. If you use Canva
 Any Canva account works for a new design. Filling your own Canva template needs a paid Canva plan. Edits you make by hand in Canva stay in Canva; run `/job-hunt:canva update` after you change your profile.
 
 ## Privacy
+
+- You're responsible for disclosing AI assistance where an employer requires it. Cleaning the text and metadata doesn't make the content human-written.
 
 - Everything stays on your computer, in `~/job-hunt/`.
 - The plugin only reads LinkedIn. It never applies to a job or sends a message for you.

@@ -1,0 +1,13 @@
+@page { size: A4; margin: 15mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, Helvetica, "Liberation Sans", sans-serif; font-size: 10.5pt; line-height: 1.28; color: #000;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+h1 { font-size: 18pt; font-weight: 700; color: #0A1F8F; line-height: 1.15; margin-bottom: 1mm; }
+h2 { font-size: 12.5pt; font-weight: 700; color: #0A1F8F; border-bottom: 1px solid #0A1F8F; margin: 3.2mm 0 1.2mm; padding-bottom: .4mm; }
+p { margin-bottom: .8mm; }
+.b { font-weight: 700; }
+.t { font-weight: 700; color: #0A1F8F; }
+.d { color: #0A1F8F; }
+a { color: inherit; text-decoration: none; }
+ul { padding-left: 5mm; margin: .4mm 0 1.6mm; }
+li { margin-bottom: .3mm; }

@@ -8,7 +8,7 @@ description: Personal job-search assistant. Reads the user's plain-language JOB_
 **Paths.**
 - `S` is this skill's folder: `${CLAUDE_PLUGIN_ROOT}/skills/job-hunt`, or the folder this SKILL.md is in.
 - `D` is the user's data folder: `$JOB_HUNT_HOME`, else `~/job-hunt`.
-- Scripts are standard-library Python **3.10+** (macOS, Linux and Windows 11), with no packages to install. `PY` below means the first of `python3`, `python3.14`, `python3.13`, `python3.12`, `python`, or `py -3` (Windows) whose `--version` is 3.10 or newer. Find it once per run. Every `python3` in this file means `PY`. Google Chrome is also needed, to turn HTML into PDF.
+- Scripts are standard-library Python **3.10+** (macOS, Linux and Windows 11), with no packages to install. `PY` below means the first of `python3`, `python3.14`, `python3.13`, `python3.12`, `python`, or `py -3` (Windows) whose `--version` is 3.10 or newer. Find it once per run. Every `python3` in this file means `PY`. Google Chrome is also needed, to turn HTML into PDF. No other tools are required: `render.py` blanks Chrome's PDF metadata itself, on every OS. If `exiftool` or `qpdf` happen to be installed, the AI-marks server uses them for a deeper clean.
 
 ```
 D/JOB_SEARCH.md            THE file the user edits (plain language). Read on every run.
@@ -86,7 +86,7 @@ Spawn **one worker per source**, in parallel. Each writes only its own `sources/
 
 Then you merge everything into `profile.json`, following `S/references/profile-schema.json`, with a stable `id` and `tags` on every entry, and into `profile.md` (positioning, stories, motivations).
 - **Confirmation round (always):** list every conflict between sources and every `[unconfirmed]` fact, then ask them all with AskUserQuestion, up to 4 multiple-choice questions per call, with the sources' versions as options. Keep asking until none are left. Record the answers under `## Confirmed (<date>)` at the top of `profile.md`, apply them to `profile.json`, and list anything the user should fix on LinkedIn themselves.
-- Render the master CV to check it: `render.py cv --profile D/profile/profile.json --lang en --out D/profile/master-en.pdf`. It may be 2 pages, since it holds everything.
+- Render the master CV to check it: `render.py cv --design classic --profile D/profile/profile.json --lang en --out D/profile/master-en.pdf --photo D/profile/sources/photo.jpg`. This is the designed two-column version, for people rather than ATS. It may be 2 pages, since it holds everything.
 
 **Updates:** when the user says something like "I now do X" or "add my certification", edit `profile.json` and `profile.md` directly, keep every fact traceable, and re-render the master.
 
@@ -117,25 +117,35 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
    - Re-read the top postings and fix any wrong scores.
    - Pick at most `top_n` jobs with `score ≥ min_score`.
    - Write `shortlist.md`: a table of every scored job (score, title, company, city, source, link, why), with ⭐ on the selected ones, followed by a "How I read your settings" line (the `notes`).
-5. **Tailor:** one Sonnet worker per selected job, in parallel, each in `runs/<today>/<company>-<role>/`. Give it only `profile.json`, `profile.md` and the job. Facts come from `profile.json` **today**, never from an earlier run's `tailored.json` or CV (those may be out of date). Each worker follows `S/references/cv-writing.md`:
-   - write `tailored.json`, `letter.json` and `notes.md`
-   - `render.py cv --profile tailored.json --lang L --out cv.pdf --photo D/profile/sources/photo.jpg` (always pass it; render.py skips the photo when the file does not exist)
-   - `render.py letter --profile tailored.json --letter letter.json --lang L --out cover-letter.pdf`
+5. **Tailor:** one Sonnet worker per selected job, in parallel, each in `runs/<today>/<company>-<role>/`. Give it only `profile.json`, `profile.md` and the job. Facts come from `profile.json` **today**, never from an earlier run's `tailored.json` or CV (those may be out of date). Each worker follows `S/references/cv-writing.md` (its ATS policy, knockout check and writing passes):
+   1. Knockout check, then write `tailored.json`, `letter.json` and `notes.md`, including the knockout table, the `- keyword` lines and the upload choice.
+   2. Run the writing passes on the letter paragraphs and the CV summary (score → humanizer if needed → scrub → re-score).
+   3. `render.py cv --profile tailored.json --lang L --out cv.pdf --docx` (keep `--docx` last). The ATS single-column design is the default: no photo, Arial, standard headings. It writes `cv.pdf`, `cv.docx` and `cv.html`.
+      - Exit 3: over one page. Trim content (never fonts) and re-render.
+      - Exit 5: a date it can't read. Fix the date's format in `tailored.json`.
+   4. `render.py check --pdf cv.pdf --docx cv.docx --profile tailored.json --lang L --keywords-file notes.md`. Exit 6 means the round-trip or keyword coverage (≥70%) failed. Fix what it reports (usually keywords that aren't in the bullets) and run steps 3–4 again, once.
+   5. `render.py letter --profile tailored.json --letter letter.json --lang L --out cover-letter.pdf`.
 
-   `L` is the posting's language when `cv_language` is "match"; anything other than fr/en becomes en. Exit code 3 means the CV is over one page: trim it and re-render.
+   `L` is the posting's language when `cv_language` is "match"; anything other than fr/en becomes en.
 6. **Review (you, every job):**
-   - Every fact, skill, number and date in `tailored.json` and the letter must trace back to `profile.json` or `profile.md`.
-   - The CV must be 1 page, and the letter must be specific to the company.
+   - Every fact, skill, number and date in `tailored.json` and the letter must trace back to `profile.json` or `profile.md`. Check the humanized paragraphs especially: they must not have gained a detail.
+   - The CV must be 1 page and `check` must have passed. The letter must be specific to the company, and French letters must keep their typography.
+   - Knockout GAPs must be visible in the shortlist, never hidden in the letter.
    - On a failure, send it back to the worker once with the exact problems. If it fails again, fix it yourself or drop it.
-   - Mark the reviewed rows ✅.
+   - Mark the reviewed rows ✅. Add an **Upload** column (`cv.pdf` / `cv.docx`) from each `notes.md`.
+6b. **File metadata clean (after every review is done):**
+   - `PY $S/scripts/aimarks.py start --state D/state`. It starts the bundled watermarks-remover server on 127.0.0.1:8765, or reports "unavailable".
+   - `PY $S/scripts/aimarks.py clean runs/<today>/*/cv.pdf runs/<today>/*/cv.docx runs/<today>/*/cover-letter.pdf`.
+   - **Always** `PY $S/scripts/aimarks.py stop --state D/state` afterwards, even if `clean` failed or you're stopping the run early.
+   - Put the `clean` lines in the report. "Unavailable", "skipped" or "partial" never stop the run. Chrome's Creator and Producer tags are already blanked by `render.py` on every OS. "partial (exiftool, qpdf missing)" only means the deeper clean that those optional tools provide was skipped.
 7. If `D` is a git repo, commit the run (`run <today>`). Never push.
 8. **Report** in plain words: how many offers were found on LinkedIn and on company sites (and which companies failed), how many were scored and selected; a link to `shortlist.md`; a link to each folder; and anything blocked or misread.
 
 ## Mode: tailor-one (an offer the user found)
-Fetch the posting with `linkedin_search.py`'s detail parser: `python3 $S/scripts/linkedin_search.py --job-url URL --out ...`. If it isn't a LinkedIn URL, read the page with the browser or WebFetch. Score it, then run tailor steps 5–6 for that one job in `runs/<today>/`.
+Fetch the posting with `linkedin_search.py`'s detail parser: `python3 $S/scripts/linkedin_search.py --job-url URL --out ...`. If it isn't a LinkedIn URL, read the page with the browser or WebFetch. Score it, then run tailor steps 5, 6 and 6b (including aimarks start, clean and stop) for that one job in `runs/<today>/`.
 
 ## Mode: canva (optional, on request only; never in a scheduled run)
-Makes one polished **Canva** version of the master CV. The daily tailored CVs always stay HTML/PDF.
+Makes one polished **Canva** version of the master CV. The daily tailored CVs always stay ATS PDF and DOCX.
 1. **Check the connector.** Look for Canva MCP tools (names containing `create-design`, e.g. `Canva:create-design` or `mcp__Canva__create-design`). If there are none, tell the user to run `/plugin install canva@claude-plugins-official`, sign in to Canva when it asks, and start a new session. Then stop.
 2. **Choose the starting point.** Ask:
    - **New design** (any Canva account): call `create-design` with a resume/CV brief. The brief contains the profile content **verbatim** from `D/profile/profile.json`: name, headline, summary, contact, experience, education, the top 4 projects, skills, languages and certifications. Add the style the user wants, for example "two columns, deep blue sidebar like my current CV". If no widget appears, poll `get-create-design-async-job`.

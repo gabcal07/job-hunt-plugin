@@ -135,7 +135,7 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
    - Mark the reviewed rows ✅. Add an **Upload** column (`cv.pdf` / `cv.docx`) from each `notes.md`.
 6b. **File metadata clean (after every review is done):**
    - `PY $S/scripts/aimarks.py start --state D/state`. It starts the bundled watermarks-remover server on 127.0.0.1:8765, or reports "unavailable".
-   - `PY $S/scripts/aimarks.py clean runs/<today>/*/cv.pdf runs/<today>/*/cv.docx runs/<today>/*/cover-letter.pdf`.
+   - `PY $S/scripts/aimarks.py clean --state D/state runs/<today>/*/cv.pdf runs/<today>/*/cv.docx runs/<today>/*/cover-letter.pdf`.
    - **Always** `PY $S/scripts/aimarks.py stop --state D/state` afterwards, even if `clean` failed or you're stopping the run early.
    - Put the `clean` lines in the report. "Unavailable", "skipped" or "partial" never stop the run. Chrome's Creator and Producer tags are already blanked by `render.py` on every OS. "partial (exiftool, qpdf missing)" only means the deeper clean that those optional tools provide was skipped.
 7. If `D` is a git repo, commit the run (`run <today>`). Never push.

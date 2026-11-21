@@ -88,10 +88,34 @@ def log_tail(log: Path, n=8) -> str:
         return ""
 
 
+def port_free(port) -> bool:
+    import socket
+    with socket.socket() as so:
+        try:
+            so.bind((HOST, port))
+            return True
+        except OSError:
+            return False
+
+
+def free_port() -> int:
+    import socket
+    with socket.socket() as so:
+        so.bind((HOST, 0))
+        return so.getsockname()[1]
+
+
 def cmd_start(a):
     state = Path(a.state)
+    if not is_up(a.port) and not port_free(a.port):  # something else holds the port: use a free one
+        old, a.port = a.port, free_port()
+        print(f"aimarks: port {old} is busy (not our server), using {a.port}")
     if is_up(a.port):
-        print(f"aimarks: up on {HOST}:{a.port} (already running, not started by us)")
+        info = read_pidfile(state)
+        if info and info.get("port") == a.port and alive(info["pid"]):
+            print(f"aimarks: up on {HOST}:{a.port} (left over from an earlier run; stop will close it)")
+        else:
+            print(f"aimarks: up on {HOST}:{a.port} (already running, not started by us)")
         return
     try:
         if not SERVER.is_file():
@@ -117,9 +141,9 @@ def cmd_start(a):
         kill(proc.pid)
         raise RuntimeError("no /health answer within 20s")
     except Exception as e:
-        tail = log_tail(state / "aimarks.log")
-        if tail:
-            print(tail)
+        tail = [l for l in log_tail(state / "aimarks.log", 40).splitlines() if l.strip()]
+        if tail:  # last line of a traceback is the useful one
+            print("aimarks: log: " + tail[-1][:200])
         print(f"aimarks: unavailable ({e})")
 
 
@@ -237,6 +261,9 @@ def clean_one(path: Path, port, miss, keep_backup) -> str:
 
 
 def cmd_clean(a):
+    if a.port is None:  # follow the port start actually used
+        info = read_pidfile(Path(a.state))
+        a.port = info["port"] if info else 8765
     up = is_up(a.port)
     miss = missing_tools(a.port) if up else []
     for f in a.files:
@@ -296,10 +323,9 @@ def main():
     for name, fn in (("start", cmd_start), ("clean", cmd_clean), ("status", cmd_status), ("stop", cmd_stop)):
         sp = sub.add_parser(name)
         sp.set_defaults(fn=fn)
-        if name != "clean":
-            sp.add_argument("--state", default=str(default_state()))
+        sp.add_argument("--state", default=str(default_state()))
         if name != "stop":
-            sp.add_argument("--port", type=int, default=None if name == "status" else 8765)
+            sp.add_argument("--port", type=int, default=None if name in ("status", "clean") else 8765)
         if name == "clean":
             sp.add_argument("files", nargs="+")
             sp.add_argument("--keep-backup", action="store_true")

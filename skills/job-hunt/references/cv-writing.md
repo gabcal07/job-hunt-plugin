@@ -59,12 +59,15 @@ Tone: direct, specific, no clichés ("passionate", "dynamic", "je me permets"). 
 ## Writing passes (letter paragraphs and the CV summary)
 Run them in this order, after the content is written and before the fact review. `CU` = `$S/../clean-user-facing-text/scripts`.
 1. **Score.** Write each paragraph to a temp `.txt` and run `PY $CU/inspect_text.py --stylometry --json <file>` (`PY` is the Python 3.10+ found in SKILL.md). Read only `stylometry.density_tier`: low / medium / high. Below 30 words it is `insufficient_length`, which counts as low. Ignore its Unicode notes about U+00A0 in French text: that's French typography, not a hidden mark.
-2. **Humanize once**, only paragraphs whose `density_tier` is `medium` or `high`. Apply the bundled `humanizer` skill (`$S/../humanizer/SKILL.md`) in **embedded mode**: return only the final text. Two overrides:
-   - **Never add a fact, detail or number** that isn't already in that paragraph, `profile.json` or `profile.md`. If a sentence is generic, make it simpler, not more specific.
-   - For **French** letters, French typography wins over humanizer's punctuation rules: keep « », the non-breaking space (U+00A0) before ; : ! ? % and inside numbers, and the formal closing formula. Removing em dashes and "ce n'est pas X mais Y" constructions still applies. `render.py` keeps these in letters and folds them to ASCII only in CVs, where ATS parsing matters more than typography.
+2. **Humanize once**: for **English**, only paragraphs whose `density_tier` is `medium` or `high`; for **French** (and any non-English letter), **every paragraph**, because the scorer's markers are English-only and score French clichés as low (tested 2026-11-21). Apply the bundled `humanizer` skill (`$S/../humanizer/SKILL.md`) in **embedded mode**: return only the final text. Two overrides:
+   - **Never add a fact, detail, number, reason or intention** that isn't already in that paragraph, `profile.json` or `profile.md`. "I designed it to be simple because…" counts as an invented claim. If a sentence is generic, make it simpler or delete it, never more specific.
+   - French clichés to remove as well: "dans un monde en constante évolution", "je me permets", "passionné(e)", "non seulement… mais aussi", "riche et diversifié", "n'hésitez pas à", "incontournable", "au quotidien" used as filler.
+   - For **French** letters, French typography wins over humanizer's punctuation rules: keep « » (and use « » rather than curly “ ” for any quotation), the non-breaking space (U+00A0) before ; : ! ? % and inside numbers, and the formal closing formula. Removing em dashes and "ce n'est pas X mais Y" constructions still applies. `render.py` keeps these in letters and folds them to ASCII only in CVs, where ATS parsing matters more than typography.
 3. **Scrub every paragraph**: `PY $CU/clean_text.py <file> -o <out> --no-normalize-spaces`, then put the cleaned text back into the JSON. Run it on the extracted strings, never on the raw JSON file.
 4. **Re-score** and write the before/after tiers in `notes.md`. They're a gauge, not a verdict; never claim the text "is human-written".
 5. Then the fact review, then rendering, then the file metadata clean (`aimarks.py`, in SKILL.md).
+
+The `subject`, `greeting` and `closing` fields skip these passes: they're fixed formulas.
 
 If any pass fails (a script error, or Python missing), keep the text as it was, note `writing pass skipped: <reason>` in `notes.md`, and carry on.
 

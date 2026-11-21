@@ -38,7 +38,7 @@ These rules come from the research note "ATS Resume Parsing — How Applicant Tr
 7. **Non-Latin script:** in the ATS CV, write names in Latin script only ("Exchange Program at Konkuk University", not "건국대학교"). Font fallback splits the text stream when parsed. The classic design may keep the original script.
 8. **Translation for `fr`:** use these fixed terms so runs stay consistent: Native → Langue maternelle; Bilingual → Bilingue; Limited working → Notions professionnelles; Micro Services → Microservices; Internship → Stage; present → présent. Write every other translation in `notes.md`.
 9. **Dates:** EN `Sep 2024 - Jan 2025`; FR `sept. 2024 - janv. 2025` (lower case, French abbreviations). `render.py` normalises them.
-10. The `summary` sentence is prose: it goes through the writing passes below (score, then humanizer if needed, then scrub). Bullets don't, because they're fact-checked lines and rewriting risks changing a claim.
+10. The `summary` sentence is prose, so it goes through the writing pass below. Bullets don't, because they're fact-checked lines and rewriting risks changing a claim.
 
 ## Cover letter (`letter.json`, same fields as below, in JSON)
 ```json-ish (write as JSON)
@@ -56,20 +56,15 @@ date: "20 novembre 2026"                 # the template prefixes the city from c
 ```
 Tone: direct, specific, no clichés ("passionate", "dynamic", "je me permets"). French letters use vouvoiement.
 
-## Writing passes (letter paragraphs and the CV summary)
-Run them in this order, after the content is written and before the fact review. `CU` = `$S/../clean-user-facing-text/scripts`.
-1. **Score.** Write each paragraph to a temp `.txt` and run `PY $CU/inspect_text.py --stylometry --json <file>` (`PY` is the Python 3.10+ found in SKILL.md). Read only `stylometry.density_tier`: low / medium / high. Below 30 words it is `insufficient_length`, which counts as low. Ignore its Unicode notes about U+00A0 in French text: that's French typography, not a hidden mark.
-2. **Humanize once**: for **English**, only paragraphs whose `density_tier` is `medium` or `high`; for **French** (and any non-English letter), **every paragraph**, because the scorer's markers are English-only and score French clichés as low (tested 2026-11-21). Apply the bundled `humanizer` skill (`$S/../humanizer/SKILL.md`) in **embedded mode**: return only the final text. Two overrides:
-   - **Never add a fact, detail, number, reason or intention** that isn't already in that paragraph, `profile.json` or `profile.md`. "I designed it to be simple because…" counts as an invented claim. If a sentence is generic, make it simpler or delete it, never more specific.
-   - French clichés to remove as well: "dans un monde en constante évolution", "je me permets", "passionné(e)", "non seulement… mais aussi", "riche et diversifié", "n'hésitez pas à", "incontournable", "au quotidien" used as filler.
-   - For **French** letters, French typography wins over humanizer's punctuation rules: keep « » (and use « » rather than curly “ ” for any quotation), the non-breaking space (U+00A0) before ; : ! ? % and inside numbers, and the formal closing formula. Removing em dashes and "ce n'est pas X mais Y" constructions still applies. `render.py` keeps these in letters and folds them to ASCII only in CVs, where ATS parsing matters more than typography.
-3. **Scrub every paragraph**: `PY $CU/clean_text.py <file> -o <out> --no-normalize-spaces`, then put the cleaned text back into the JSON. Run it on the extracted strings, never on the raw JSON file.
-4. **Re-score** and write the before/after tiers in `notes.md`. They're a gauge, not a verdict; never claim the text "is human-written".
-5. Then the fact review, then rendering, then the file metadata clean (`aimarks.py`, in SKILL.md).
+## Writing pass (letter paragraphs and the CV summary)
+After the content is written and before the fact review, rewrite **every letter paragraph and the CV summary once** with the bundled `humanizer` skill (`$S/../humanizer/SKILL.md`), in **embedded mode** (return only the final text). Rules on top of humanizer's own:
+- **Never add a fact, detail, number, reason or intention** that isn't already in that paragraph, `profile.json` or `profile.md`. "I designed it to be simple because…" counts as an invented claim. If a sentence is generic, make it simpler or delete it, never more specific.
+- French clichés to remove as well: "dans un monde en constante évolution", "je me permets", "passionné(e)", "non seulement… mais aussi", "riche et diversifié", "n'hésitez pas à", "incontournable", "au quotidien" used as filler.
+- For **French** letters, French typography wins over humanizer's punctuation rules: keep « » (and use « » rather than curly “ ” for any quotation), the non-breaking space (U+00A0) before ; : ! ? % and inside numbers, and the formal closing formula. Removing em dashes and "ce n'est pas X mais Y" constructions still applies. `render.py` keeps these in letters and folds them to ASCII only in CVs, where ATS parsing matters more than typography.
+- The `subject`, `greeting` and `closing` fields are fixed formulas and are not rewritten.
+- `render.py` removes invisible characters (zero-width spaces, BOM, soft hyphens) from every CV and letter, so there's no separate scrub step.
 
-The `subject`, `greeting` and `closing` fields skip these passes: they're fixed formulas.
-
-If any pass fails (a script error, or Python missing), keep the text as it was, note `writing pass skipped: <reason>` in `notes.md`, and carry on.
+The aim is a clearer letter in the user's voice, not hiding that AI helped: never claim the text "is human-written". If the pass can't run, keep the text as written and note `writing pass skipped: <reason>` in `notes.md`.
 
 ## notes.md (per job)
 - The job URL, score, why it was picked.
@@ -78,4 +73,4 @@ If any pass fails (a script error, or Python missing), keep the text as it was, 
 - **Knockout table**: must-have → profile evidence (id) or GAP.
 - **`## Keywords`** section, written **after the final one-page render** (trimming can remove a keyword): one `- keyword` line per exact phrase copied from the posting **and actually used in the CV** (for example `- LLM`, `- CI/CD`, `- Python`), 8–15 of them, never a gap. `render.py check --keywords-file notes.md` reads only this section and needs ≥70% of them in the CV text.
 - **Upload**: `cv.pdf` or `cv.docx`, and why (the ATS).
-- **Writing passes**: the stylometry tier per paragraph, before and after.
+- **Writing pass**: which paragraphs the humanizer changed, as one line each.

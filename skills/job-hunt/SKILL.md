@@ -1,6 +1,6 @@
 ---
 name: job-hunt
-description: Personal job-search assistant. Reads the user's plain-language JOB_SEARCH.md (contracts, cities, job titles, target companies, offers per day…), searches LinkedIn job postings and the careers sites of companies the user watches, scores and shortlists them against the user's profile, and writes a tailored one-page CV and cover letter PDF for the best offers. Also builds the profile from a CV, LinkedIn and notes, runs a guided setup, and can make an optional polished Canva version of the CV (via the Canva MCP). Use for "find me jobs", "job hunt", setting up or changing a job search, building or updating a job profile, tailoring a CV or cover letter to an offer, or when the scheduled job-hunt run fires.
+description: Personal job-search assistant. Reads the user's plain-language JOB_SEARCH.md (contracts, cities, job titles, target companies, offers per day…), searches LinkedIn job postings and the careers sites of companies the user watches, scores and shortlists them against the user's profile, and writes a tailored one-page CV and cover letter PDF for the best offers. Also builds the profile from a CV, LinkedIn and notes, runs a guided setup, and can make an optional polished Canva version of the CV (via the Canva MCP). Bundled: the `humanizer` skill, used on cover letters. Use for "find me jobs", "job hunt", setting up or changing a job search, building or updating a job profile, tailoring a CV or cover letter to an offer, or when the scheduled job-hunt run fires.
 ---
 
 # job-hunt
@@ -8,7 +8,7 @@ description: Personal job-search assistant. Reads the user's plain-language JOB_
 **Paths.**
 - `S` is this skill's folder: `${CLAUDE_PLUGIN_ROOT}/skills/job-hunt`, or the folder this SKILL.md is in.
 - `D` is the user's data folder: `$JOB_HUNT_HOME`, else `~/job-hunt`.
-- Scripts are standard-library Python **3.10+** (macOS, Linux and Windows 11), with no packages to install. `PY` below means the first of `python3`, `python3.14`, `python3.13`, `python3.12`, `python`, or `py -3` (Windows) whose `--version` is 3.10 or newer. Find it once per run. Every `python3` in this file means `PY`. Google Chrome is also needed, to turn HTML into PDF. No other tools are required: `render.py` blanks Chrome's PDF metadata itself, on every OS. If `exiftool` or `qpdf` happen to be installed, the AI-marks server uses them for a deeper clean.
+- Scripts are standard-library Python **3.10+** (macOS, Linux and Windows 11), with no packages to install. `PY` below means the first of `python3`, `python3.14`, `python3.13`, `python3.12`, `python`, or `py -3` (Windows) whose `--version` is 3.10 or newer. Find it once per run. Every `python3` in this file means `PY`. Google Chrome is also needed, to turn HTML into PDF. No other tools are needed.
 
 ```
 D/JOB_SEARCH.md            THE file the user edits (plain language). Read on every run.
@@ -117,9 +117,9 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
    - Re-read the top postings and fix any wrong scores.
    - Pick at most `top_n` jobs with `score ≥ min_score`.
    - Write `shortlist.md`: a table of every scored job (score, title, company, city, source, link, why), with ⭐ on the selected ones, followed by a "How I read your settings" line (the `notes`).
-5. **Tailor:** one Sonnet worker per selected job, in parallel, each in `runs/<today>/<company>-<role>/`. Give it only `profile.json`, `profile.md` and the job. Facts come from `profile.json` **today**, never from an earlier run's `tailored.json` or CV (those may be out of date). Each worker follows `S/references/cv-writing.md` (its ATS policy, knockout check and writing passes):
+5. **Tailor:** one Sonnet worker per selected job, in parallel, each in `runs/<today>/<company>-<role>/`. Give it only `profile.json`, `profile.md` and the job. Facts come from `profile.json` **today**, never from an earlier run's `tailored.json` or CV (those may be out of date). Each worker follows `S/references/cv-writing.md` (its ATS policy, knockout check and writing pass):
    1. Knockout check, then write `tailored.json`, `letter.json` and `notes.md`, including the knockout table, the `- keyword` lines and the upload choice.
-   2. Run the writing passes on the letter paragraphs and the CV summary (score → humanizer if needed → scrub → re-score).
+   2. Run the writing pass on the letter paragraphs and the CV summary: one humanizer rewrite each, with no new facts.
    3. `render.py cv --profile tailored.json --lang L --out cv.pdf --docx` (keep `--docx` last). The ATS single-column design is the default: no photo, Arial, standard headings. It writes `cv.pdf`, `cv.docx` and `cv.html`.
       - Exit 3: over one page. Trim content (never fonts) and re-render.
       - Exit 5: a date it can't read. Fix the date's format in `tailored.json`.
@@ -133,16 +133,11 @@ Then you merge everything into `profile.json`, following `S/references/profile-s
    - Knockout GAPs must be visible in the shortlist, never hidden in the letter.
    - On a failure, send it back to the worker once with the exact problems. If it fails again, fix it yourself or drop it.
    - Mark the reviewed rows ✅. Add an **Upload** column (`cv.pdf` / `cv.docx`) from each `notes.md`.
-6b. **File metadata clean (after every review is done):**
-   - `PY $S/scripts/aimarks.py start --state D/state`. It starts the bundled watermarks-remover server on 127.0.0.1:8765, or reports "unavailable".
-   - `PY $S/scripts/aimarks.py clean --state D/state runs/<today>/*/cv.pdf runs/<today>/*/cv.docx runs/<today>/*/cover-letter.pdf`.
-   - **Always** `PY $S/scripts/aimarks.py stop --state D/state` afterwards, even if `clean` failed or you're stopping the run early.
-   - Put the `clean` lines in the report. "Unavailable", "skipped" or "partial" never stop the run. Chrome's Creator and Producer tags are already blanked by `render.py` on every OS. "partial (exiftool, qpdf missing)" only means the deeper clean that those optional tools provide was skipped.
 7. If `D` is a git repo, commit the run (`run <today>`). Never push.
 8. **Report** in plain words: how many offers were found on LinkedIn and on company sites (and which companies failed), how many were scored and selected; a link to `shortlist.md`; a link to each folder; and anything blocked or misread.
 
 ## Mode: tailor-one (an offer the user found)
-Fetch the posting with `linkedin_search.py`'s detail parser: `python3 $S/scripts/linkedin_search.py --job-url URL --out ...`. If it isn't a LinkedIn URL, read the page with the browser or WebFetch. Score it, then run tailor steps 5, 6 and 6b (including aimarks start, clean and stop) for that one job in `runs/<today>/`.
+Fetch the posting with `linkedin_search.py`'s detail parser: `python3 $S/scripts/linkedin_search.py --job-url URL --out ...`. If it isn't a LinkedIn URL, read the page with the browser or WebFetch. Score it, then run tailor steps 5 and 6 for that one job in `runs/<today>/`.
 
 ## Mode: canva (optional, on request only; never in a scheduled run)
 Makes one polished **Canva** version of the master CV. The daily tailored CVs always stay ATS PDF and DOCX.

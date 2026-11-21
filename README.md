@@ -6,19 +6,21 @@ Your daily job search, done for you by Claude.
 
 - Searches LinkedIn every day for the kind of job you want, plus the careers sites of the companies you choose to watch.
 - Matches each offer to your profile and keeps the best ones in a short list.
-- Writes a tailored one-page CV and cover letter for each top offer (the CV as PDF and Word DOCX, the letter as PDF). The CV uses a plain single-column layout that applicant tracking systems (ATS) read reliably. The cover letter is checked for AI-sounding phrasing and stripped of hidden characters and file metadata.
+- Writes a tailored one-page CV and cover letter for each top offer (the CV as PDF and Word DOCX, the letter as PDF). The CV uses a plain single-column layout that applicant tracking systems (ATS) read reliably. The cover letter is edited to remove stock AI phrasing, without adding anything that isn't in your profile.
 
 ## Install
 
-1. Open Claude Code (the desktop app or the command-line version) on Mac, Windows 11 or Linux. You need **Google Chrome** and **Python 3.10 or newer**. On Windows, run `winget install Python.Python.3.12`. On a Mac, Python usually comes with Claude's developer tools; otherwise `brew install python`. Setup checks both for you.
-2. Run these two commands, one after the other:
+1. Open **Claude Code**: the **Code** tab of the Claude desktop app, or the `claude` command line. Mac, Windows 11 and Linux all work.
+   > The **Chat** tab and claude.ai can't install plugins or run the plugin's scripts. If Claude there offers to "save a job-hunt skill" instead, decline: you'd get a simplified copy without the LinkedIn script, the careers-site feeds or the ATS checks.
+2. Install **Google Chrome** and **Python 3.10 or newer**. On Windows, in a terminal: `winget install Python.Python.3.12` and `winget install Google.Chrome`. On a Mac: `brew install python` if needed. Setup checks both for you.
+3. Run these two commands in Claude Code, one after the other:
 
 ```
 /plugin marketplace add gabcal07/job-hunt-plugin
 /plugin install job-hunt@job-hunt-marketplace
 ```
 
-3. Optional but recommended: install Lightpanda, a fast browser the plugin uses to read web pages. On a Mac, type `brew install lightpanda` in Terminal; on Linux or Windows (WSL), download it from lightpanda.io. Then restart Claude. Without it, Google Chrome is used instead.
+4. Optional but recommended: install Lightpanda, a fast browser the plugin uses to read web pages. On a Mac, type `brew install lightpanda` in Terminal; on Linux or Windows (WSL), download it from lightpanda.io. Then restart Claude. Without it, Google Chrome is used instead.
 
 ## Start
 
@@ -45,7 +47,7 @@ Example lines in `JOB_SEARCH.md` (add as many as you like):
 
 ## Credits
 
-Bundled, unmodified, under their MIT licences: [humanizer](https://github.com/blader/humanizer) (Siqi Chen), and [clean-user-facing-text, remove-ai-marks and the watermarks-remover service](https://github.com/guillaumemeyer/watermarks-remover) (Guillaume Meyer). See each folder's `SOURCE.md`.
+Bundled, unmodified, under its MIT licence: [humanizer](https://github.com/blader/humanizer) (Siqi Chen). See `skills/humanizer/SOURCE.md`.
 
 ## Commands
 
@@ -69,7 +71,7 @@ Any Canva account works for a new design. Filling your own Canva template needs 
 
 ## Privacy
 
-- You're responsible for disclosing AI assistance where an employer requires it. Cleaning the text and metadata doesn't make the content human-written.
+- You're responsible for disclosing AI assistance where an employer requires it. Editing the wording doesn't make the content human-written.
 
 - Everything stays on your computer, in `~/job-hunt/`.
 - The plugin only reads LinkedIn. It never applies to a job or sends a message for you.

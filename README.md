@@ -20,11 +20,11 @@ Your daily job search, done for you by Claude.
 /plugin install job-hunt@job-hunt-marketplace
 ```
 
-4. Optional but recommended: install Lightpanda, a fast browser the plugin uses to read web pages. On a Mac, type `brew install lightpanda` in Terminal; on Linux or Windows (WSL), download it from lightpanda.io. Then restart Claude. Without it, Google Chrome is used instead.
+4. Nothing else to install: web pages are read with Claude's built-in WebFetch (and the app's browser when a page needs it), so it works on the Pro plan.
 
 ## Start
 
-Run `/job-hunt:setup`. It asks you a few questions. Have your CV and your LinkedIn URL ready.
+Run `/job-hunt:setup`. It asks you a few questions. Have your CV ready, and your LinkedIn profile saved as a PDF (on your profile: More → Save to PDF).
 
 ## Every day
 

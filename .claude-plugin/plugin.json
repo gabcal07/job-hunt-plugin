@@ -1,6 +1,6 @@
 {
   "name": "job-hunt",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Daily job search on LinkedIn and the careers sites of companies you watch, matched to your profile, with a tailored CV and cover letter for the best offers.",
   "author": {
     "name": "gabcal07"
@@ -12,13 +12,5 @@
     "cover-letter",
     "career",
     "jobs"
-  ],
-  "mcpServers": {
-    "lightpanda": {
-      "command": "lightpanda",
-      "args": [
-        "mcp"
-      ]
-    }
-  }
+  ]
 }

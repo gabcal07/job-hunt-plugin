@@ -60,6 +60,24 @@ Bundled, unmodified, under its MIT licence: [humanizer](https://github.com/blade
 | `/job-hunt:profile` | Build your profile, or update it with a change |
 | `/job-hunt:canva` | Optional: a polished Canva version of your CV |
 
+## Optional: Apify (free) for more reliable LinkedIn results
+
+LinkedIn limits how many offers one internet connection can read per day, and it limits a VPN or office network even more. With a free [Apify](https://apify.com) account, the daily search reads LinkedIn through Apify's servers instead. Every offer then comes with its full description, and Welcome to the Jungle is added for cities in France.
+
+1. Create a free account at apify.com. No credit card is needed.
+2. Copy your API token from **Settings → API & Integrations**.
+3. In Claude, paste it into this plugin's settings (**Customize → Plugins → job-hunt**, or `/config`). Start a new session.
+
+**Cost:**
+- The free plan gives $5 of credit a month.
+- One offer costs $0.0004, so a typical day of about 90 offers costs about 4 cents.
+- The plugin stops using Apify at $4.50 a month and goes back to reading LinkedIn directly, so you're never charged.
+- To change how many offers each search fetches, set `Apify offers per search` in `JOB_SEARCH.md`.
+
+The token is kept in Claude's secure storage. A small start-up step copies it into the plugin's private folder so the search scripts can read it. If that step can't run (on Windows without `python3` on the PATH), set an `APIFY_TOKEN` environment variable instead.
+
+Apify also publishes its own Claude Code plugin (`/plugin marketplace add apify/apify-claude-code-plugin`) for scraping other sites by chat. The daily search doesn't need it.
+
 ## Optional: a Canva version of your CV
 
 The daily CVs are always plain PDFs, so they work for everyone. If you use Canva and want a hand-polished master CV there:

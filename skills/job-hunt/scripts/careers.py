@@ -9,12 +9,17 @@ Usage:
   careers.py --self-test
 """
 import argparse
+import io
 import json
 import os
 import re
 import sys
+import tempfile
+import time
 import unicodedata
 import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timezone
 if sys.version_info < (3, 10):
     sys.exit("Python 3.10 or newer is needed: install it from python.org (Windows: also `winget install Python.Python.3.12`).")
@@ -22,13 +27,22 @@ for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
     _s.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from linkedin_search import Blocked, Client, job_key  # noqa: E402
+from linkedin_search import HEADERS, Blocked, Client, job_key  # noqa: E402
 
 JSON = "application/json"
 REMOTE_WORDS = ("remote", "télétravail", "teletravail", "anywhere")
 CONTRACT_WORDS = {"alternance", "vie", "stage", "cdi"}
 # synonym groups: any term of a group counts as the others (matched on accent-stripped lowercase text)
 SYNONYMS = [("ai", "ia"), ("ml", "machine learning"), ("engineer", "ingenieur")]
+CACHE_DIR = None  # set by run_fetch from --cache-dir (Google's 19 MB feed is cached there)
+GOOGLE_FEED = "https://www.google.com/about/careers/applications/jobs/feed.xml"
+IBM_API = "https://www-api.ibm.com/search/api/v2"
+NAVER_LIST = "https://recruit.navercorp.com/rcrt/loadJobList.do?firstIndex=%d&entTypeCd=&searchTxt=%s"
+MS_HOME = "https://apply.careers.microsoft.com/careers"
+MS_SEARCH = "https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com&query=%s&location=%s&start=%d&sort_by=relevance"
+MS_DETAIL = "https://apply.careers.microsoft.com/api/pcsx/position_details?position_id=%s&domain=microsoft.com"
+SAP_SITEMAPS = ("https://jobs.sap.com/en/jobs/sitemap.xml", "https://jobs.sap.com/fr/jobs/sitemap.xml")
+URL_PLATFORMS = ("google", "ibm", "naver", "microsoft", "sap_sitemap")  # feed_url = the careers URL itself
 NO_TOKEN = {"www", "api", "careers", "jobs", "app", "support", "help", "blog", "status"}  # not a recruitee board name
 
 
@@ -50,6 +64,8 @@ def feed_for(platform, token, eu=False, careers_url=None):
     if platform == "amazon":  # token = the search query; the careers URL's location rides along in the feed URL
         q = urllib.parse.parse_qs(urllib.parse.urlparse(careers_url or "").query)
         return amazon_url(token)
+    if platform in URL_PLATFORMS:
+        return careers_url
     return {
         "greenhouse": "https://boards-api.greenhouse.io/v1/boards/%s/jobs?content=true",
         "lever": "https://api.%slever.co/v0/postings/%%s?mode=json" % ("eu." if eu else ""),
@@ -91,6 +107,16 @@ def detect_url(url):
             return "workable", parts[4], False
         if first and first != "api":
             return "workable", first, False
+    if host in ("www.google.com", "google.com") and parts[:2] == ["about", "careers"]:
+        return "google", "google", False
+    if host in ("www.ibm.com", "ibm.com") and first == "careers" or host == "careers.ibm.com":
+        return "ibm", "ibm", False
+    if host == "recruit.navercorp.com":
+        return "naver", "naver", False
+    if host in ("apply.careers.microsoft.com", "jobs.careers.microsoft.com", "careers.microsoft.com"):
+        return "microsoft", "microsoft", False
+    if host == "jobs.sap.com":
+        return "sap_sitemap", "sap", False
     m = re.fullmatch(r"([a-z0-9-]+)\.recruitee\.com", host)
     if m and m.group(1) not in NO_TOKEN:
         return "recruitee", m.group(1), False
@@ -245,8 +271,77 @@ def n_amazon(d, t):
     return out
 
 
+def n_google(d, t, locs=()):
+    """d = the feed's XML (bytes/str). Keeps only jobs whose location holds one of `locs` (accent-stripped lowercase) to stay small."""
+    out = []
+    for _, e in ET.iterparse(io.BytesIO(d.encode("utf-8") if isinstance(d, str) else d), events=("end",)):
+        if e.tag != "job":
+            continue
+        loc = " / ".join(", ".join(x for x in (l.findtext("city"), l.findtext("country")) if x) for l in e.iter("location"))
+        if not locs or any(c in norm(loc) for c in locs):
+            out.append(job("google", t, e.findtext("jobid"), e.findtext("url"), e.findtext("title"), loc,
+                           day(e.findtext("published")), clean(e.findtext("description"))))
+        e.clear()
+    return out
+
+
+def n_ibm(d, t):
+    out = []
+    for h in (d.get("hits") or {}).get("hits", []):
+        s = h.get("_source") or {}
+        url = s.get("url") or ""
+        jid = (urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("jobId") or [url])[0]
+        out.append(job("ibm", t, jid, url, s.get("title"), s.get("field_keyword_05"), "", clean(s.get("description"))))
+    return out
+
+
+def n_naver(d, t):
+    # shortcut: the list API gives only a work-area code (0010), no place name: every job is placed at the Seongnam HQ
+    return [dict(job("naver", t, j["annoId"], j.get("jobDetailLink"), j.get("annoSubject"), "Seongnam, Seoul area, South Korea",
+                     "%s-%s-%s" % (j["staYmd"][:4], j["staYmd"][4:6], j["staYmd"][6:8]) if len(j.get("staYmd") or "") == 8 else "", ""),
+                 _detail=j.get("jobDetailLink")) for j in d.get("list", [])]
+
+
+def naver_description(html):
+    """Text of the detail boxes of a view.do page (server-rendered HTML)."""
+    i = html.find('class="detail_wrap"')
+    return clean(html[html.find(">", i) + 1:].split("<footer")[0]) if i >= 0 else ""
+
+
+def n_microsoft(d, t):
+    return [dict(job("microsoft", t, j["id"], "https://apply.careers.microsoft.com" + (j.get("positionUrl") or ""), j.get("name"),
+                     " / ".join(j.get("standardizedLocations") or j.get("locations") or []), day((j.get("postedTs") or 0) * 1000), ""),
+                 _detail=MS_DETAIL % j["id"]) for j in (d.get("data") or {}).get("positions", [])]
+
+
+def microsoft_description(d):
+    return clean((d.get("data") or {}).get("jobDescription"))
+
+
+def n_sap_sitemap(d, t):
+    """d = sitemap XML. Entries are .../jobs/<id>/<slug>/ (fr: /emplois/): title = the slug, no city is given -> location ''.
+    shortcut: SAP slugs carry no city, so every title match passes location_ok; upgrade when a non-blocked detail source exists."""
+    out = []
+    for u in ET.fromstring(d.encode("utf-8") if isinstance(d, str) else d):
+        loc = next((c.text or "" for c in u if c.tag.endswith("loc")), "")
+        mod = next((c.text or "" for c in u if c.tag.endswith("lastmod")), "")
+        parts = [x for x in urllib.parse.urlparse(loc).path.split("/") if x]
+        i = next((k for k, x in enumerate(parts) if x.isdigit() and len(x) >= 6), None)
+        if i is None:
+            continue
+        slug = parts[i + 1] if i + 1 < len(parts) else (parts[i - 1] if parts[i - 1] not in ("job", "jobs", "emplois") else "")
+        x = job("sap_sitemap", t, parts[i], loc, " ".join(w.capitalize() for w in slug.split("-")), "", day(mod), "")
+        x["description_unavailable"] = True
+        out.append(x)
+    return out
+
+
 NORMALISE = {"greenhouse": n_greenhouse, "lever": n_lever, "ashby": n_ashby, "smartrecruiters": n_smartrecruiters,
-             "workable": n_workable, "recruitee": n_recruitee, "amazon": n_amazon}
+             "workable": n_workable, "recruitee": n_recruitee, "amazon": n_amazon, "google": n_google, "ibm": n_ibm,
+             "naver": n_naver, "microsoft": n_microsoft, "sap_sitemap": n_sap_sitemap}
+# per-platform parser of the `_detail` URL's response (fetched only for jobs that passed the filters); RAW = HTML, not JSON
+DETAIL = {"smartrecruiters": smartrecruiters_description, "microsoft": microsoft_description, "naver": naver_description}
+RAW_DETAIL = {"naver"}
 
 
 # ---------- filters ----------
@@ -289,7 +384,9 @@ def location_ok(loc, cfg):
         return True
     l = norm(loc)
     cities = [norm(s["location"].split(",")[0]).strip() for s in cfg.get("searches", [])]
-    return any(c and c in l for c in cities) or any(norm(w) in l for w in REMOTE_WORDS)
+    countries = [norm(s["location"].split(",")[-1]).strip() for s in cfg.get("searches", [])]
+    # a bare country (IBM's only location field) counts: that feed was already queried per configured country
+    return any(c and c in l for c in cities) or l.strip() in countries or any(norm(w) in l for w in REMOTE_WORDS)
 
 
 def excluded(j, cfg):
@@ -300,6 +397,43 @@ def excluded(j, cfg):
 
 
 # ---------- fetch ----------
+
+def post_json(url, body):
+    """POST a JSON body (the Client only does GET); same User-Agent, 30 s timeout. 429/403 -> Blocked."""
+    req = urllib.request.Request(url, json.dumps(body).encode(), {"User-Agent": HEADERS["User-Agent"], "Content-Type": JSON,
+                                                                   "Accept": JSON}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        if e.code in (429, 403):
+            raise Blocked("HTTP %d from %s" % (e.code, url), e.code)
+        raise
+
+
+def query_groups(cfg):
+    """keyword_groups minus those containing another group's words (the shorter query already returns them)."""
+    gs = keyword_groups(cfg)
+    return [g for g in gs if not any(set(h) < set(g) for h in gs)] or [[]]
+
+
+def search_places(cfg):
+    """(cities, countries) of the configured searches, deduped, in order."""
+    parts = [[x.strip() for x in s.get("location", "").split(",") if x.strip()] for s in cfg.get("searches", [])]
+    return (list(dict.fromkeys(p[0] for p in parts if p)), list(dict.fromkeys(p[-1] for p in parts if p)))
+
+
+def google_feed(get_raw):
+    """The ~19 MB feed, cached in CACHE_DIR/google-feed.xml and re-downloaded when older than 20 h."""
+    path = os.path.join(CACHE_DIR or tempfile.gettempdir(), "google-feed.xml")
+    if not (os.path.exists(path) and time.time() - os.path.getmtime(path) < 20 * 3600):
+        text = get_raw(GOOGLE_FEED)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    with open(path, "rb") as f:
+        return f.read()
+
 
 def fetch_company(co, clients, blocked, cfg):
     """Return normalised (unfiltered) jobs for one company."""
@@ -313,16 +447,64 @@ def fetch_company(co, clients, blocked, cfg):
         raise Blocked("host %s blocked earlier in this run" % host)
     cli = clients.setdefault(host, Client())
 
-    def get_json(url):
+    def get_json(url, raw=False):
         try:
-            text = cli.get(url, accept=JSON)
+            text = cli.get(url, accept="text/html,application/xml" if raw else JSON)
         except Blocked:
             blocked.add(urllib.parse.urlparse(url).hostname)
             raise
         if not text:
             raise ValueError("HTTP 404 for %s" % url)
-        return json.loads(text)
+        return text if raw else json.loads(text)
 
+    cities, countries = search_places(cfg)
+    qg = query_groups(cfg)
+    if plat == "google":
+        locs = [norm(c) for c in cities + countries]
+        return n_google(google_feed(lambda u: get_json(u, raw=True)), tok, locs), get_json
+    if plat == "sap_sitemap":
+        merged = {}
+        for u in SAP_SITEMAPS:
+            merged.update((j["id"].rsplit(":", 1)[1], j) for j in n_sap_sitemap(get_json(u, raw=True), tok))
+        return list(merged.values()), get_json
+    if plat == "ibm":  # one POST per (title group, configured country)
+        merged = {}
+        for g in qg:
+            for country in countries or [""]:
+                body = {"appId": "careers", "scopes": ["careers2"], "query": {"bool": {"must": [
+                    {"simple_query_string": {"query": " ".join(g), "fields": ["title^3", "description^2", "field_keyword_05"]}}]
+                    + ([{"match": {"field_keyword_05": country}}] if country else [])}},
+                    "size": 50, "from": 0, "lang": "zz", "_source": ["title", "url", "field_keyword_05", "description"]}
+                time.sleep(1.5)
+                merged.update((j["url"], j) for j in n_ibm(post_json(IBM_API, body), tok))
+        return list(merged.values()), get_json
+    if plat == "naver":  # one short term per title group, paged by firstIndex up to 200
+        terms = list(dict.fromkeys(next((w for w in g if w != "engineer"), g[0]) for g in qg if g)) or [""]
+        merged = {}
+        for term in terms:
+            n = 0
+            while n < 200:
+                d = get_json(NAVER_LIST % (n, urllib.parse.quote(term)))
+                lst = d.get("list") or []
+                merged.update((j["id"], j) for j in n_naver(d, tok))
+                n += len(lst)
+                if not lst or n >= d.get("totalSize", 0):
+                    break
+        return list(merged.values()), get_json
+    if plat == "microsoft":  # one query per (title group, configured city); the search 429s without the cookie of the home page
+        get_json(MS_HOME, raw=True)
+        merged = {}
+        for g in qg:
+            for city in cities or [""]:
+                part = []
+                while len(part) < 50:
+                    d = get_json(MS_SEARCH % (urllib.parse.quote(" ".join(g)), urllib.parse.quote(city), len(part)))
+                    more = n_microsoft(d, tok)
+                    part += more
+                    if not more or len(part) >= (d.get("data") or {}).get("count", 0):
+                        break
+                merged.update((j["id"], j) for j in part)
+        return list(merged.values()), get_json
     if plat == "amazon":  # one search per configured country, merged by job id, paged up to 300 each
         countries = list(dict.fromkeys(COUNTRY_ISO3.get(s.get("location", "").split(",")[-1].strip().lower(), "")
                                        for s in cfg.get("searches", [])))
@@ -358,6 +540,9 @@ def run_fetch(a):
     if a.seen and os.path.exists(a.seen):
         with open(a.seen, encoding="utf-8") as f:
             seen = json.load(f)
+    global CACHE_DIR
+    # outside the user's data folder (often a git repo): the plugin's own data dir, else the system temp dir
+    CACHE_DIR = a.cache_dir or os.path.join(tempfile.gettempdir(), "job-hunt-cache")
     groups, today = keyword_groups(cfg), date.today().isoformat()
     clients, blocked, out_jobs, needs_browser, report = {}, set(), [], [], []
     for co in companies:
@@ -378,7 +563,7 @@ def run_fetch(a):
                     continue
                 if j.get("_detail"):  # description only for jobs that passed the filters
                     try:
-                        j["description"] = smartrecruiters_description(get_json(j["_detail"]))
+                        j["description"] = DETAIL[j["platform"]](get_json(j["_detail"], raw=j["platform"] in RAW_DETAIL))
                     except Blocked:
                         raise
                     except Exception as e:
@@ -471,6 +656,41 @@ def self_test():
         "https://www.amazon.jobs/en/search.json?base_query=ml+eng&result_limit=100&offset=0")
     assert amazon_url("ml", "KOR").endswith("&country=KOR")
     assert detect_url(amazon_url("ml eng", "Paris", 100))[:2] == ("amazon", "ml eng")
+    for url, plat in (("https://www.google.com/about/careers/applications/jobs/results?location=Paris%2C%20France&q=AI%20engineer", "google"),
+                      ("https://www.ibm.com/careers/search?field_keyword_05[0]=France&q=AI%20engineer", "ibm"),
+                      ("https://recruit.navercorp.com/rcrt/list.do", "naver"),
+                      ("https://apply.careers.microsoft.com/careers?query=AI%20engineer&location=Paris%2C%20France", "microsoft"),
+                      ("https://jobs.sap.com/search/?q=AI&locationsearch=Paris", "sap_sitemap")):
+        assert detect_url(url)[0] == plat and feed_for(plat, "x", False, url) == url, url
+    assert detect_url("https://www.google.com/search?q=x")[0] == "other"
+    gx = ("<jobs><job><published>2026-10-20T08:09:16.735Z</published><jobid>11</jobid><title>ML Engineer</title>"
+          "<description>&lt;h3&gt;Hi&lt;/h3&gt;&lt;p&gt;Build &amp;amp; ship&lt;/p&gt;</description><url>https://g/11</url><locations>"
+          "<location><city>Paris</city><state/><country>France</country></location><location><city>London</city><country>UK</country></location>"
+          "</locations></job><job><jobid>12</jobid><title>X</title><url>https://g/12</url><locations><location><city>Austin</city>"
+          "<country>USA</country></location></locations></job></jobs>")
+    assert len(n_google(gx, "t")) == 2
+    j = n_google(gx, "t", ["paris", "korea"])[0]
+    assert len(n_google(gx, "t", ["paris"])) == 1
+    assert (j["id"], j["location"], j["posted"], j["description"]) == ("google:t:11", "Paris, France / London, UK", "2026-10-20", "Hi Build & ship"), j
+    j = one("ibm", {"hits": {"hits": [{"_source": {"title": "AI Engineer", "url": "https://careers.ibm.com/careers/JobDetail?jobId=142086",
+                                                  "field_keyword_05": "France", "description": "<p>Text</p>"}}]}})
+    assert (j["id"], j["location"], j["description"]) == ("ibm:t:142086", "France", "Text"), j
+    j = one("naver", {"list": [{"annoId": 3, "annoSubject": "[NAVER] AI Engineer", "staYmd": "20261113",
+                                "jobDetailLink": "https://recruit.navercorp.com/rcrt/view.do?annoId=3"}]})
+    assert (j["id"], j["posted"], j["_detail"].endswith("annoId=3"), "South Korea" in j["location"]) == ("naver:t:3", "2026-11-13", True, True), j
+    assert naver_description('<div class="detail_wrap"><div><h4>Req</h4><p>Python <b>3</b></p></div></div><footer>x</footer>') == "Req Python 3"
+    j = one("microsoft", {"data": {"count": 1, "positions": [{"id": 77, "name": "AI Engineer", "standardizedLocations": ["Paris, IDF, FR"],
+                                                              "postedTs": 1789975670, "positionUrl": "/careers/job/77"}]}})
+    assert (j["id"], j["url"], j["location"], j["posted"], j["_detail"].endswith("position_id=77&domain=microsoft.com")) == (
+        "microsoft:t:77", "https://apply.careers.microsoft.com/careers/job/77", "Paris, IDF, FR", "2026-09-21", True), j
+    assert microsoft_description({"data": {"jobDescription": "<b>Overview</b><br><p>Do AI</p>"}}) == "Overview Do AI"
+    sx = ('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://jobs.sap.com/en/jobs/744000162680449/'
+          'junior-machine-learning-engineer/</loc><lastmod>2026-11-21T04:00:05.369Z</lastmod></url><url><loc>https://jobs.sap.com/job/'
+          'Paris-Data-Engineer/1234567/</loc></url></urlset>')
+    a_, b_ = n_sap_sitemap(sx, "t")
+    assert (a_["id"], a_["title"], a_["posted"], a_["description"], a_["description_unavailable"]) == (
+        "sap_sitemap:t:744000162680449", "Junior Machine Learning Engineer", "2026-11-21", "", True), a_
+    assert (b_["id"], b_["title"]) == ("sap_sitemap:t:1234567", "Paris Data Engineer"), b_
     assert token_candidates("Open AI", "https://www.openai.jobs/x") == ["openai", "open-ai"], token_candidates("Open AI", "https://www.openai.jobs/x")
     assert token_candidates("Coupang", "https://www.coupang.jobs/en/jobs/") == ["coupang"]
     assert token_candidates("", "careers.doctolib.com") == ["doctolib"]
@@ -519,6 +739,7 @@ def main():
     f.add_argument("--seen")
     f.add_argument("--out")
     f.add_argument("--dry-run", action="store_true", help="do not update companies.json or the seen file")
+    f.add_argument("--cache-dir", help="where the Google feed is cached (default: system temp)")
     a = p.parse_args()
     if a.self_test:
         return self_test()

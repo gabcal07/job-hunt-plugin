@@ -24,6 +24,7 @@
   "max_per_search": 15,
   "max_total": 60,
   "max_details": 20,
+  "apify_per_search": 15,
   "preferences": "free text from 'What I want / avoid', verbatim",
   "notes": ["anything you interpreted or could not map, in plain words"]
 }
@@ -43,7 +44,7 @@
 - **preferences:** the "What I want / avoid" text verbatim, plus every wish that has no field: school rhythm, categories to avoid, visa situation, company type. Keep the user's words.
 - **Numbers:** "N offers" → `top_n`. "minimum X", "even weak ones (X)" → `min_score` X. Default `min_score` is 65.
 - **Dates:** `start` is "YYYY-MM"; "September 2027" → "2027-09", "asap" → the current month.
-- **Caps:** `max_total` = min(150, 10 × top_n + 30). `max_per_search` = 25 (each OR search covers several titles). `max_details` = min(40, 4 × top_n) descriptions (one LinkedIn request each, best-ranked jobs first). Optional `max_requests` (default 90) caps LinkedIn requests per run; leave it out unless the user is on a home IP and wants more.
+- **Caps:** `max_total` = min(150, 10 × top_n + 30). `max_per_search` = 25 (each OR search covers several titles). `max_details` = min(40, 4 × top_n) descriptions (one LinkedIn request each, best-ranked jobs first). Optional `max_requests` (default 90) caps LinkedIn requests per run; leave it out unless the user is on a home IP and wants more. `apify_per_search` (default 15, 1–50) is how many LinkedIn and Welcome to the Jungle offers each search fetches through Apify, from "Apify offers per search" in JOB_SEARCH.md; it only matters when the user has set an Apify token.
 - **cv_language:** "match" (same as the offer), "en" or "fr".
 - **Ambiguity:** never guess silently. Make the most reasonable reading and write it in `notes` in plain words. The run report shows `notes`, so the user can correct the file.
 - **Missing required fields** (no job titles or no cities): stop and ask. In a scheduled run, report it instead.

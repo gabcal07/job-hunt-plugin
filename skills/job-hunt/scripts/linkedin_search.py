@@ -11,6 +11,8 @@ LinkedIn limits guest requests per IP (roughly 100-200 from a home IP, fewer fro
 A block during the search keeps what was found and still fetches descriptions after one cool-down
 ("search_cut_short": true), unless it was a 999; a block while fetching descriptions stops ("blocked": true).
 A cookie jar and a browser header set are kept for the whole run. --proxy (or HTTPS_PROXY) routes through a proxy.
+--source auto (default) uses Apify (apify.py) when a token is set and the monthly budget allows: every job then has
+its description and no request leaves the user's IP. Any Apify problem falls back to the guest path, with a "note".
 
 Usage: linkedin_search.py (--settings PATH | --query Q --location L) [--max-total N] [--out FILE] [--dry-run]
 """
@@ -270,7 +272,75 @@ def build_searches(a, cfg):
     return out
 
 
+def run_apify(a, cfg, specs, seen):
+    """Jobs through Apify (one actor run per search). Raises apify.ApifyUnavailable to trigger the guest fallback."""
+    import apify
+    tok = apify.token(a.token_file)
+    if not tok:
+        raise apify.ApifyUnavailable("no Apify token")
+    cli = apify.Apify(tok)
+    used, cap = cli.check_budget()
+    skip = [k for k in seen if k.isdigit()][-1000:]  # LinkedIn ids already evaluated: not fetched, not charged
+    excl_re = re.compile(r"\b(" + "|".join(re.escape(k.lower()) for k in a.exclude_keyword) + r")\b") if a.exclude_keyword else None
+    excl_co = [c.lower() for c in a.exclude_company]
+    targets, per = cfg.get("target_companies", []), cfg.get("apify_per_search", 15)
+    searches, per_search, ids, terms = [], [], set(), {}
+    for s in specs:
+        why = s.get("why") or s["query"]
+        terms[why] = terms.get(why, []) + title_terms(s["query"])
+        # the actor offers 24 h, a week or a month: anything over 24 h (incl. Monday's 72 h) asks for a week;
+        # skipJobId and seen.json keep already-seen jobs out
+        tpr = "r86400" if hours(s.get("posted_within_hours") or 24) <= 24 else "r604800"
+        items = cli.run(apify.LINKEDIN_ACTOR, apify.linkedin_input(s, per, a.exclude_keyword, skip, tpr), per, apify.LINKEDIN_FIELDS)
+        kept = []
+        for it in items:
+            j = apify.linkedin_job(it)
+            text = (j["title"] + " " + j["company"]).lower()
+            if (not j["id"] or j["id"] in ids or j["id"] in seen or job_key(j["company"], j["title"]) in seen
+                    or (excl_re and excl_re.search(text)) or any(c in j["company"].lower() for c in excl_co)):
+                continue
+            ids.add(j["id"])
+            j["search_why"], j["target_company"] = why, is_target(j["company"], targets)
+            kept.append(j)
+        searches.append({"query": s["query"], "location": s["location"], "why": why, "found": len(items)})
+        per_search.append(kept)
+    jobs = [j for j in itertools.chain.from_iterable(itertools.zip_longest(*per_search)) if j][: a.max_total]
+    jobs.sort(key=lambda j: rank(j, terms), reverse=True)
+    return {"searches": searches, "jobs": jobs, "apify_used_usd": round(used, 2), "apify_cap_usd": cap,
+            "apify_runs": len(specs)}
+
+
 def run(a, cfg, specs):
+    if a.source != "guest":
+        import apify
+        seen = {}
+        if a.seen and os.path.exists(a.seen):
+            with open(a.seen, encoding="utf-8") as f:
+                seen = json.load(f)
+        try:
+            out = run_apify(a, cfg, specs, seen)
+            if a.seen and not a.dry_run:
+                today = date.today().isoformat()
+                for j in out["jobs"]:
+                    seen.setdefault(j["id"], today)
+                    seen.setdefault(job_key(j["company"], j["title"]), today)
+                with open(a.seen, "w", encoding="utf-8") as f:
+                    json.dump(seen, f, indent=1)
+            return dict({"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": "apify",
+                         "blocked": False, "search_cut_short": False, "requests": 0, "skipped": [], "note": ""}, **out)
+        except apify.ApifyUnavailable as e:
+            if a.source == "apify":
+                raise SystemExit("Apify unavailable: %s" % e)
+            note = "Apify not used (%s); read LinkedIn directly" % e
+            if str(e) != "no Apify token":
+                print("note: " + note, file=sys.stderr)
+            res = run_guest(a, cfg, specs)
+            res["note"] = note if str(e) != "no Apify token" else ""
+            return res
+    return run_guest(a, cfg, specs)
+
+
+def run_guest(a, cfg, specs):
     seen = {}
     if a.seen:
         try:
@@ -351,8 +421,8 @@ def run(a, cfg, specs):
         with open(a.seen, "w", encoding="utf-8") as f:
             json.dump(seen, f, indent=1)
 
-    return {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocked": blocked, "search_cut_short": search_cut,
-            "requests": cli.count, "searches": searches, "jobs": jobs,
+    return {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": "guest", "blocked": blocked,
+            "search_cut_short": search_cut, "requests": cli.count, "searches": searches, "jobs": jobs,
             "skipped": [{k: j.get(k, "") for k in ("id", "url", "title", "company", "location", "posted")} for j in skipped]}
 
 
@@ -425,6 +495,31 @@ def self_test():
         assert False, "cap"
     except Blocked as e:
         assert e.code is None and "cap" in str(e)
+    import apify
+    calls = []
+
+    class FakeApify(apify.Apify):
+        def check_budget(self):
+            return 1.0, 5.0
+
+        def run(self, actor, inp, max_items, fields=None, max_charge=apify.RUN_CAP):
+            calls.append(inp)
+            return [{"id": "111", "url": "https://x/jobs/view/111", "title": "AI Engineer", "companyName": "Acme",
+                     "location": "Paris", "description": "d " * 50},
+                    {"id": "222", "title": "Senior AI Engineer", "companyName": "Beta"},
+                    {"id": "333", "title": "Data Engineer", "companyName": "Seen Co"}]
+    real, apify.Apify = apify.Apify, FakeApify
+    os.environ["APIFY_TOKEN"] = "t"
+    try:
+        a = argparse.Namespace(source="auto", token_file=None, seen=None, dry_run=True, exclude_keyword=["senior"],
+                               exclude_company=[], max_total=50)
+        out = run_apify(a, {"target_companies": ["Acme"]}, [{"query": "(AI engineer)", "location": "Paris", "why": "w"}],
+                        {"333": "2026-11-20"})
+        assert [j["id"] for j in out["jobs"]] == ["111"] and out["jobs"][0]["target_company"], out
+        assert "333" in calls[0]["skipJobId"] and calls[0]["titleExclude"] == ["senior"], calls
+    finally:
+        apify.Apify = real
+        os.environ.pop("APIFY_TOKEN", None)
     print("self-test OK")
 
 
@@ -446,6 +541,8 @@ def main():
     p.add_argument("--max-details", type=int, help="descriptions to fetch, best-ranked first (default %d, or the file's value)" % MAX_DETAILS)
     p.add_argument("--max-requests", type=int, help="LinkedIn requests per run (default %d)" % MAX_REQUESTS)
     p.add_argument("--proxy", default=os.environ.get("HTTPS_PROXY") or None, help="http(s)://user:pass@host:port")
+    p.add_argument("--source", default="auto", choices=["auto", "apify", "guest"], help="auto: Apify when a token is set")
+    p.add_argument("--token-file", help="file holding the Apify token (else $APIFY_TOKEN)")
     p.add_argument("--out")
     p.add_argument("--dry-run", action="store_true", help="do not update the seen file")
     p.add_argument("--self-test", action="store_true")

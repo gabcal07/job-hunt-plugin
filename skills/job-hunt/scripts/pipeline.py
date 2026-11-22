@@ -82,9 +82,9 @@ def settings_status(a):
 # ---------------------------------------------------------------- merge
 def merge(run):
     li = jobs_of(load(run / "jobs.json", {"jobs": []}))
-    ca = jobs_of(load(run / "careers.json", {"jobs": []}))
+    ca = jobs_of(load(run / "careers.json", {"jobs": []})) + jobs_of(load(run / "wttj.json", {"jobs": []}))
     out, by_key = [], {}
-    for j in ca + li:  # careers first: the company's own link wins
+    for j in ca + li:  # careers (and WTTJ) first: the company's own link wins
         k = job_key(j.get("company", ""), j.get("title", ""))
         if k in by_key:
             keep = by_key[k]
@@ -185,6 +185,9 @@ def prepare(a):
     run, cfg, prof = Path(a.run), load(a.settings), load(a.profile)
     jobs = jobs_of(load(run / "all.json"))
     auto, todo = [], []
+    links = [j for j in jobs if j.get("description_unavailable")]  # e.g. SAP: title and link only, never scored
+    jobs = [j for j in jobs if not j.get("description_unavailable")]
+    save(run / "links_only.json", [{k: j.get(k, "") for k in ("id", "title", "company", "location", "url")} for j in links])
     for j in jobs:
         why = hard_zero(j, cfg)
         if why:
@@ -209,7 +212,7 @@ def prepare(a):
         p = d / ("batch%d.json" % n)
         save(p, dict(ctx, jobs=batch, out=str(d / ("scores%d.json" % n))))
         paths.append(str(p))
-    print(json.dumps({"jobs": len(jobs), "auto_zero": len(auto), "to_score": len(todo), "batches": paths}))
+    print(json.dumps({"jobs": len(jobs), "links_only": len(links), "auto_zero": len(auto), "to_score": len(todo), "batches": paths}))
 
 
 # ---------------------------------------------------------------- collect, bonuses, selection, shortlist
@@ -239,7 +242,7 @@ def slug(s):
 
 def collect(a):
     run, cfg = Path(a.run), load(a.settings)
-    jobs = {j["id"]: j for j in jobs_of(load(run / "all.json"))}
+    jobs = {j["id"]: j for j in jobs_of(load(run / "all.json")) if not j.get("description_unavailable")}
     scores = {s["id"]: s for s in load(run / "auto.json", [])}
     for f in sorted((run / "_score").glob("scores*.json")):
         for s in load(f):
@@ -288,6 +291,10 @@ def write_shortlist(run, ranked, jobs, sel):
     rest = len(ranked) - SHORTLIST_ROWS
     zeros = sum(1 for s in ranked if s["score"] == 0)
     tail = ["", "%d more below (in scores.json); %d scored 0." % (rest, zeros)] if rest > 0 else []
+    links = load(run / "links_only.json", [])
+    if links:
+        tail += ["", "## Open these yourself (the site blocks automated reading, so they weren't scored)", ""]
+        tail += ["- [%s](%s) · %s · %s" % (cell(l["title"]), l["url"], cell(l["company"]), cell(l["location"])) for l in links[:15]]
     (run / "shortlist.md").write_text("# Shortlist %s\n\n%d offers scored, %d selected.\n\n" % (run.name, len(ranked), len(sel))
                                       + "\n".join(rows + tail) + "\n", encoding="utf-8")
 
@@ -374,7 +381,11 @@ def render_all(a):
 def report(run):
     li, ca = load(run / "jobs.json", {}), load(run / "careers.json", {})
     sc, sel = load(run / "scores.json", []), load(run / "selected.json", [])
-    return {"linkedin_found": len(li.get("jobs", [])), "linkedin_skipped": len(li.get("skipped", [])),
+    wt = load(run / "wttj.json", {})
+    return {"linkedin_source": li.get("source", "guest"), "linkedin_note": li.get("note", ""),
+            "apify_used_usd": li.get("apify_used_usd"), "wttj_found": len(wt.get("jobs", [])), "wttj_note": wt.get("note", ""),
+            "links_only": len(load(run / "links_only.json", [])),
+            "linkedin_found": len(li.get("jobs", [])), "linkedin_skipped": len(li.get("skipped", [])),
             "linkedin_blocked": li.get("blocked", False), "linkedin_cut_short": li.get("search_cut_short", False),
             "careers_found": len(ca.get("jobs", [])),
             "companies_failed": [c["name"] for c in ca.get("companies", []) if c.get("status") not in ("ok", "no_feed")],

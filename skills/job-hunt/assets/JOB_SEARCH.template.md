@@ -13,6 +13,7 @@ Write naturally: lists can be as long as you like, sentences are fine, and you c
 - Minimum match: 65               ← 0-100; offers below this are never tailored
 - Posted within: 1 day            ← 1 day / 3 days / 1 week
 - Language of CV: same as the offer   ← same as the offer / English / French
+- Apify offers per search: 15     ← only if you connected Apify (optional; 1-50)
 - Salary minimum: none            ← e.g. 45k€/year
 
 ## Job titles to search

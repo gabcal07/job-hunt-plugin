@@ -1,6 +1,6 @@
 {
   "name": "job-hunt",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Daily job search on LinkedIn and the careers sites of companies you watch, matched to your profile, with a tailored CV and cover letter for the best offers.",
   "author": {
     "name": "gabcal07"
@@ -12,5 +12,13 @@
     "cover-letter",
     "career",
     "jobs"
-  ]
+  ],
+  "userConfig": {
+    "apify_token": {
+      "type": "string",
+      "title": "Apify API token (optional)",
+      "description": "Free at apify.com, no card. The daily search then reads LinkedIn through Apify instead of your connection, and adds Welcome to the Jungle. Leave empty to skip.",
+      "sensitive": true
+    }
+  }
 }

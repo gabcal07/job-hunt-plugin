@@ -18,7 +18,7 @@ JOB_TYPES = "FPCTIVO"
 TOP = {
     "searches": True, "target_companies": True, "bonus_companies": True, "exclude_words": True,
     "exclude_companies": True, "top_n": True, "min_score": True, "cv_language": True,
-    "max_per_search": True, "max_total": True,
+    "max_per_search": True, "max_total": True, "max_details": False, "max_requests": False,
     "contracts": False, "level": False, "remote": False, "start": False, "salary_min": False,
     "preferences": False, "notes": False,
 }
@@ -91,7 +91,8 @@ def validate(d):
     for k in ("target_companies", "bonus_companies", "exclude_words", "exclude_companies", "contracts", "notes"):
         if k in d:
             str_list(d, k, errs)
-    for k, lo, hi in (("top_n", 1, 100), ("min_score", 0, 100), ("max_per_search", 1, 1000), ("max_total", 1, 1000)):
+    for k, lo, hi in (("top_n", 1, 100), ("min_score", 0, 100), ("max_per_search", 1, 1000), ("max_total", 1, 1000),
+                      ("max_details", 0, 200), ("max_requests", 10, 500)):
         if k in d and not (is_int(d[k]) and lo <= d[k] <= hi):
             errs.append("%s: %r is not a whole number from %d to %d" % (k, d[k], lo, hi))
     if "cv_language" in d and d["cv_language"] not in ("match", "en", "fr"):

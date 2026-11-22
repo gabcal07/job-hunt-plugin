@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """Polite, read-only LinkedIn job collector using the public guest endpoints (no login).
 
-Stdlib only, Python 3.10+. Paces LinkedIn requests 4-8 s apart; on 429/999/403 cools down 60 s then 180 s.
-If the search phase is still blocked it waits once more and fetches descriptions for what it found
-("search_cut_short": true); a block while fetching descriptions stops everything ("blocked": true).
+Stdlib only, Python 3.10+ (uses curl_cffi's Chrome fingerprint if it is installed; JOBHUNT_IMPERSONATE=0 turns it off).
+LinkedIn limits guest requests per IP (roughly 100-200 from a home IP, fewer from VPN/datacenter IPs), so:
+- descriptions (one request each) are fetched only for the --max-details best-ranked jobs; the rest go to
+  "skipped" and are not marked seen, so they can come back on a later day;
+- requests are paced 4-8 s apart and capped at --max-requests per run (the search stops early, "search_cut_short",
+  to leave room for the descriptions);
+- 429/403: cool down 90 s, then 180 s, slowing the pace each time; 999 (IP ban) stops at once.
+A block during the search keeps what was found and still fetches descriptions after one cool-down
+("search_cut_short": true), unless it was a 999; a block while fetching descriptions stops ("blocked": true).
+A cookie jar and a browser header set are kept for the whole run. --proxy (or HTTPS_PROXY) routes through a proxy.
 
 Usage: linkedin_search.py (--settings PATH | --query Q --location L) [--max-total N] [--out FILE] [--dry-run]
 """
 import argparse
 import html
+import http.cookiejar
+import os
 import itertools
 import json
 import re
@@ -29,18 +38,26 @@ for _s in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252
 BASE = "https://www.linkedin.com/jobs-guest/jobs/api/"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/130.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
+                  "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+    "Referer": "https://www.linkedin.com/jobs/search",
+    "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin",
 }
 BLOCK_CODES = (429, 999, 403)
+HARD_BLOCK = 999  # IP-level ban that lasts 10 min to hours: retrying only extends it
 RETRY_WAIT = 20
 # LinkedIn rate-limits per IP: pause between requests, cool down on a block, then give up
 LINKEDIN_PAUSE = (4.0, 8.0)
-COOLDOWNS = (60, 180)
+COOLDOWNS = (90, 180)
+MAX_REQUESTS = 90
+MAX_DETAILS = 20
 
 
 class Blocked(Exception):
-    pass
+    def __init__(self, msg, code=None):
+        super().__init__(msg)
+        self.code = code
 
 
 class Grab(HTMLParser):
@@ -133,34 +150,68 @@ def parse_detail(html_text):
     }
 
 
-class Client:
-    def __init__(self, pause=(1.5, 3.5), cooldowns=(RETRY_WAIT,)):
-        self.last, self.pause, self.cooldowns = False, pause, cooldowns
+def _curl_session(proxy):
+    if os.environ.get("JOBHUNT_IMPERSONATE") == "0":
+        return None
+    try:
+        from curl_cffi import requests as creq
+    except ImportError:
+        return None
+    return creq.Session(impersonate="chrome", proxies={"https": proxy, "http": proxy} if proxy else None)
 
-    def get(self, url, accept=None):
-        if self.last:
-            time.sleep(random.uniform(*self.pause))
-        self.last = True
-        hops, attempt = 0, 0
+
+class Client:
+    """One session per run: cookie jar, browser headers, pacing, request cap, status-aware cool-downs."""
+
+    def __init__(self, pause=(1.5, 3.5), cooldowns=(RETRY_WAIT,), max_requests=None, proxy=None, sleep=time.sleep):
+        self.last, self.pause, self.cooldowns, self.max_requests = False, pause, cooldowns, max_requests
+        self.count, self.sleep, self.curl = 0, sleep, _curl_session(proxy)
+        handlers = [urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())]
+        if proxy:
+            handlers.append(urllib.request.ProxyHandler({"https": proxy, "http": proxy}))
+        self.opener = urllib.request.build_opener(*handlers)
+
+    def fetch(self, url, headers):
+        """(status, body). Overridden in the self-test."""
+        if self.curl:
+            r = self.curl.get(url, headers={k: v for k, v in headers.items() if k != "User-Agent"}, timeout=30)
+            return r.status_code, r.text
+        hops = 0
         while True:
             try:
-                req = urllib.request.Request(url, headers=dict(HEADERS, Accept=accept) if accept else HEADERS)
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    return r.read().decode("utf-8", "replace")
+                with self.opener.open(urllib.request.Request(url, headers=headers), timeout=30) as r:
+                    return r.status, r.read().decode("utf-8", "replace")
             except urllib.error.HTTPError as e:
                 if e.code == 308 and e.headers.get("Location") and hops < 5:  # py3.9 urllib does not follow 308
                     url, hops = urllib.parse.urljoin(url, e.headers["Location"]), hops + 1
                     continue
-                if e.code not in BLOCK_CODES:
-                    if e.code == 404:
-                        return ""
-                    raise
-                if attempt >= len(self.cooldowns):
-                    raise Blocked("HTTP %d after %d cool-downs" % (e.code, attempt))
-                wait = self.cooldowns[attempt]
-                print("warning: HTTP %d, cooling down %ds then retrying" % (e.code, wait), file=sys.stderr)
-                time.sleep(wait)
-                attempt += 1
+                return e.code, ""
+
+    def get(self, url, accept=None):
+        if self.max_requests is not None and self.count >= self.max_requests:
+            raise Blocked("request cap of %d reached for this run" % self.max_requests)
+        if self.last:
+            self.sleep(random.uniform(*self.pause))
+        self.last = True
+        attempt = 0
+        while True:
+            self.count += 1
+            code, body = self.fetch(url, dict(HEADERS, Accept=accept) if accept else HEADERS)
+            if code < 400:
+                return body
+            if code == 404:
+                return ""
+            if code not in BLOCK_CODES:
+                raise urllib.error.HTTPError(url, code, "HTTP %d" % code, None, None)
+            if code == HARD_BLOCK:
+                raise Blocked("HTTP 999: LinkedIn banned this IP for now (try again in a few hours)", code)
+            if attempt >= len(self.cooldowns):
+                raise Blocked("HTTP %d after %d cool-downs" % (code, attempt), code)
+            wait = self.cooldowns[attempt]
+            self.pause = tuple(min(p * 2, 30.0) for p in self.pause)  # slow down for the rest of the run
+            print("warning: HTTP %d, cooling down %ds, then pacing %.0f-%.0f s" % ((code, wait) + self.pause), file=sys.stderr)
+            self.sleep(wait)
+            attempt += 1
 
 
 GENDER = re.compile(r"\((?:h/f|f/h|m/f|f/m|x/f/m|f/m/x|m/w/d|h/f/x|f/h/d|w/m/d|m/f/d|hf|fh)\)|\b(?:h/f|f/h|m/f|f/m)\b")
@@ -186,6 +237,19 @@ def search_url(s, start):
         if v:
             p[k] = ",".join(map(str, v))
     return BASE + "seeMoreJobPostings/search?" + urllib.parse.urlencode(p)
+
+
+def title_terms(query):
+    """'(AI engineer) OR (data engineer alternance)' -> [['ai','engineer'], ['data','engineer','alternance']]."""
+    groups = re.findall(r"\(([^()]*)\)", query) or [query]
+    return [w for w in (re.findall(r"[a-z0-9+#]+", g.lower()) for g in groups) if w]
+
+
+def rank(j, terms):
+    """Higher = fetch its description first: target company, then title match, then newest."""
+    t = set(re.findall(r"[a-z0-9+#]+", j["title"].lower()))
+    match = max((sum(w in t for w in g) / len(g) for g in terms.get(j.get("search_why"), [])), default=0)
+    return (j.get("target_company", False), round(match, 2), j.get("posted", ""))
 
 
 def is_target(company, targets):
@@ -214,8 +278,10 @@ def run(a, cfg, specs):
                 seen = json.load(f)
         except FileNotFoundError:
             pass
-    cli = Client(LINKEDIN_PAUSE, COOLDOWNS)
-    searches, per_search, ids, blocked, search_cut = [], [], set(), False, False
+    cli = Client(LINKEDIN_PAUSE, COOLDOWNS, a.max_requests, a.proxy)
+    searches, per_search, ids, blocked, search_cut, block_code = [], [], set(), False, False, None
+    terms = {}
+    search_budget = a.max_requests - (0 if a.no_details else min(a.max_details, a.max_total))
     excl_kw = [k.lower() for k in a.exclude_keyword]
     excl_co = [c.lower() for c in a.exclude_company]
     targets = cfg.get("target_companies", [])
@@ -231,9 +297,13 @@ def run(a, cfg, specs):
         for s in specs:
             found, kept, start = 0, [], 0
             why = s.get("why") or s["query"]
+            terms[why] = terms.get(why, []) + title_terms(s["query"])
             searches.append({"query": s["query"], "location": s["location"], "why": why, "found": 0})
             per_search.append(kept)
             while found < a.max_per_search:
+                if cli.count >= search_budget:  # keep the rest of the request cap for descriptions
+                    search_cut = True
+                    break
                 cards = parse_cards(cli.get(search_url(s, start)))
                 if not cards:
                     break
@@ -248,22 +318,27 @@ def run(a, cfg, specs):
                 start += 10
             searches[-1]["found"] = found
     except Blocked as e:
-        blocked = True
+        blocked, block_code = True, e.code
         print("WARNING: LinkedIn blocked the search (%s). Keeping the results so far." % e, file=sys.stderr)
 
     # interleave searches so max-total does not starve later ones
     jobs = [j for j in itertools.chain.from_iterable(itertools.zip_longest(*per_search)) if j][: a.max_total]
+    # one request per description: spend them on the best-ranked jobs only
+    jobs.sort(key=lambda j: rank(j, terms), reverse=True)
+    jobs, skipped = jobs[: a.max_details], jobs[a.max_details:]
     if not a.no_details:
-        if blocked:  # search was cut short: cool down once, then still try the descriptions we need
+        if blocked and block_code not in (HARD_BLOCK, None):
+            # search was cut short by a soft block: cool down once, then still try the descriptions we need
             print("cooling down %ds before fetching descriptions" % COOLDOWNS[-1], file=sys.stderr)
-            time.sleep(COOLDOWNS[-1])
+            cli.sleep(COOLDOWNS[-1])
             blocked, search_cut = False, True
-        try:
-            for j in jobs:
-                j.update(parse_detail(cli.get(BASE + "jobPosting/" + j["id"])))
-        except Blocked as e:
-            blocked = True
-            print("WARNING: LinkedIn blocked us (%s). Stopping all requests; keeping what was gathered." % e, file=sys.stderr)
+        if not blocked:
+            try:
+                for j in jobs:
+                    j.update(parse_detail(cli.get(BASE + "jobPosting/" + j["id"])))
+            except Blocked as e:
+                blocked = True
+                print("WARNING: LinkedIn blocked us (%s). Stopping all requests; keeping what was gathered." % e, file=sys.stderr)
     for j in jobs:
         for k in ("seniority", "employment_type", "job_function", "industries", "applicants", "description"):
             j.setdefault(k, "")
@@ -277,7 +352,8 @@ def run(a, cfg, specs):
             json.dump(seen, f, indent=1)
 
     return {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "blocked": blocked, "search_cut_short": search_cut,
-            "searches": searches, "jobs": jobs}
+            "requests": cli.count, "searches": searches, "jobs": jobs,
+            "skipped": [{k: j.get(k, "") for k in ("id", "url", "title", "company", "location", "posted")} for j in skipped]}
 
 
 SAMPLE_CARD = """<ul><li><div class="base-card base-search-card" data-entity-urn="urn:li:jobPosting:123456">
@@ -314,6 +390,41 @@ def self_test():
                            posted_within_hours=None)
     bs = build_searches(a, {"searches": [dict(s)]})
     assert [x["experience"] for x in bs] == [["1"], ["1"]] and bs[0]["workplace"] == [1, 3] and bs[1]["why"] == "cli", bs
+    assert title_terms("(AI engineer) OR (data engineer alternance)") == [["ai", "engineer"], ["data", "engineer", "alternance"]]
+    terms = {"w": title_terms("(AI engineer) OR (data engineer)")}
+    js = [{"title": "Sales manager", "search_why": "w", "posted": "2026-11-20"},
+          {"title": "Data Engineer", "search_why": "w", "posted": "2026-11-18"},
+          {"title": "Chef", "search_why": "w", "target_company": True}]
+    assert [j["title"] for j in sorted(js, key=lambda j: rank(j, terms), reverse=True)] == ["Chef", "Data Engineer", "Sales manager"]
+
+    class Fake(Client):  # scripted statuses, no network, no real sleep
+        def __init__(self, codes, **kw):
+            super().__init__((1, 2), (90, 180), sleep=lambda s: self.slept.append(s), **kw)
+            self.codes, self.slept = list(codes), []
+
+        def fetch(self, url, headers):
+            return self.codes.pop(0), "ok"
+    c = Fake([429, 200])
+    assert c.get("u") == "ok" and c.slept == [90] and c.pause == (2, 4), (c.slept, c.pause)
+    c = Fake([999, 200])
+    try:
+        c.get("u")
+        assert False, "999 must not be retried"
+    except Blocked as e:
+        assert e.code == 999 and c.count == 1 and c.slept == []
+    c = Fake([429, 429, 429])
+    try:
+        c.get("u")
+        assert False
+    except Blocked as e:
+        assert e.code == 429 and c.slept == [90, 180]
+    c = Fake([200, 200, 200], max_requests=2)
+    c.get("a"), c.get("b")
+    try:
+        c.get("c")
+        assert False, "cap"
+    except Blocked as e:
+        assert e.code is None and "cap" in str(e)
     print("self-test OK")
 
 
@@ -332,6 +443,9 @@ def main():
     p.add_argument("--exclude-company", action="append", default=[])
     p.add_argument("--seen", help="JSON file id -> first_seen date")
     p.add_argument("--no-details", action="store_true")
+    p.add_argument("--max-details", type=int, help="descriptions to fetch, best-ranked first (default %d, or the file's value)" % MAX_DETAILS)
+    p.add_argument("--max-requests", type=int, help="LinkedIn requests per run (default %d)" % MAX_REQUESTS)
+    p.add_argument("--proxy", default=os.environ.get("HTTPS_PROXY") or None, help="http(s)://user:pass@host:port")
     p.add_argument("--out")
     p.add_argument("--dry-run", action="store_true", help="do not update the seen file")
     p.add_argument("--self-test", action="store_true")
@@ -345,7 +459,7 @@ def main():
             p.error("--job-url: no LinkedIn job id found in %r" % a.job_url)
         jid = m.group(1)
         job = {"id": jid, "url": "https://www.linkedin.com/jobs/view/" + jid}
-        page = Client(LINKEDIN_PAUSE, COOLDOWNS).get(BASE + "jobPosting/" + jid)
+        page = Client(LINKEDIN_PAUSE, COOLDOWNS, proxy=a.proxy).get(BASE + "jobPosting/" + jid)
         job.update(parse_detail(page))
         # shortcut: top-card regexes for the one-off mode only; search mode gets these from cards
         for k, rx in (("title", r'topcard__title[^>]*>([^<]+)'), ("company", r'topcard__org-name-link[^>]*>\s*([^<]+)'),
@@ -364,7 +478,8 @@ def main():
             cfg = json.load(f)
     elif not a.query or not a.location:
         p.error("need --settings, or at least one --query and one --location")
-    for flag, key, dflt in (("max_per_search", "max_per_search", 25), ("max_total", "max_total", 60)):
+    for flag, key, dflt in (("max_per_search", "max_per_search", 25), ("max_total", "max_total", 60),
+                            ("max_details", "max_details", MAX_DETAILS), ("max_requests", "max_requests", MAX_REQUESTS)):
         if getattr(a, flag) is None:
             setattr(a, flag, cfg.get(key, dflt))
     a.exclude_keyword = a.exclude_keyword or cfg.get("exclude_words", [])

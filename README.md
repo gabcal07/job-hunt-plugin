@@ -6,7 +6,7 @@ Your daily job search, done for you by Claude.
 
 - Searches LinkedIn every day for the kind of job you want, plus the careers sites of the companies you choose to watch. That includes Google, Microsoft, IBM, Naver and SAP, read from their public job feeds. SAP offers come as links only, because the site blocks automated reading.
 - Matches each offer to your profile and keeps the best ones in a short list.
-- Writes a tailored one-page CV and cover letter for each top offer (the CV as PDF and Word DOCX, the letter as PDF). The PDF CV uses a clean single-column design (accent colour picked for the sector, optional photo, bold key results) that applicant tracking systems (ATS) still read reliably; the DOCX keeps a plain layout for portals like Workday. The cover letter is edited to remove stock AI phrasing, without adding anything that isn't in your profile.
+- Writes a tailored one-page CV and cover letter for each top offer (both as PDF and Word DOCX). The PDF CV uses a clean single-column design (accent colour picked for the sector, optional photo, bold key results) that applicant tracking systems (ATS) still read reliably; the DOCX keeps a plain layout for portals like Workday. The cover letter is edited to remove stock AI phrasing, without adding anything that isn't in your profile.
 
 ## Install
 
@@ -28,7 +28,13 @@ Run `/job-hunt:setup`. It asks you a few questions. Have your CV ready, and your
 
 ## Every day
 
-Open `~/job-hunt/runs/<date>/shortlist.md` to see today's offers. Each offer has its own folder with a tailored CV and cover letter (PDF). You apply yourself, on LinkedIn or the company site.
+Open `~/job-hunt/runs/<date>/shortlist.md` to see today's offers. Each offer has its own folder containing only what you need:
+
+- `cv.pdf` and `cv.docx`: the tailored CV.
+- `cover-letter.pdf` and `cover-letter.docx`: the tailored letter.
+- `notes.md`: why the offer was picked, the gaps to know about, and which CV file to upload.
+
+Everything else (the posting, the edited profile, the intermediate pages) is in the folder's `_work` subfolder, and you can ignore it. You apply yourself, on LinkedIn or the company site.
 
 ## Change what you're looking for
 

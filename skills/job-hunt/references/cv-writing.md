@@ -23,7 +23,7 @@ These rules come from the research note "ATS Resume Parsing — How Applicant Tr
 
 **Which file to upload** (`notes.md` and the shortlist): Greenhouse, Lever, Ashby, Workable or SmartRecruiters → `cv.pdf`; Workday, Taleo, SuccessFactors, iCIMS, LinkedIn Easy Apply or unknown → `cv.docx`.
 
-## CV (`tailored.json` = a copy of profile.json, edited)
+## CV (`_work/tailored.json` = a copy of profile.json, edited)
 1. Write `summary` for this job: 1–2 lines in the target language, naming the role and 2–3 matched strengths.
 2. Experience: keep all entries (no gaps in the timeline); in each one, order the bullets most-relevant first and keep 2–4.
 3. Projects: as many as fit, most relevant first. Aim for 2–3; 1 is acceptable when the experience is strong.
@@ -58,7 +58,7 @@ Pick per job and write the choice in `notes.md`:
 - CV-specific AI tells to avoid in bullets as well: every bullet starting with the same verb, identical sentence lengths, trailing "…, ensuring/fostering/enhancing X", words like spearheaded, leveraged, orchestrated, robust, seamless, pivotal, results-driven. Fix by stating the fact plainly, never by adding a detail.
 - In `tailor-one` mode (the user is in the chat), you may list **likely but unlisted** experience the offer needs (inferred from the profile's roles and tools) and ask the user to confirm it; add it to `profile.json` only after a yes. In the daily run, never: unconfirmed means absent.
 
-## Cover letter (`letter.json`, same fields as below, in JSON)
+## Cover letter (`_work/letter.json`, same fields as below, in JSON)
 ```json-ish (write as JSON)
 company: Acme
 role: AI Engineer
@@ -84,7 +84,7 @@ After the content is written and before the fact review, rewrite **every letter 
 
 The aim is a clearer letter in the user's voice, not hiding that AI helped: never claim the text "is human-written". If the pass can't run, keep the text as written and note `writing pass skipped: <reason>` in `notes.md`.
 
-## notes.md (per job)
+## notes.md (per job, at the folder root)
 - The job URL, score, why it was picked.
 - A keyword coverage table: posting requirement → profile evidence (id) or "gap".
 - A list of every rephrased bullet: `original id → new text` (this is what the reviewer checks).

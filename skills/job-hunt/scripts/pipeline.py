@@ -17,7 +17,9 @@ Stdlib only, Python 3.10+. Every command prints a short summary (never job text)
   pipeline.py factcheck --profile P.json --profile-md P.md --dir RUN/<job>
       Numbers, skills, titles and dates in tailored.json / letter.json that are not in the profile. Exit 8 if any.
   pipeline.py render-all --dir RUN/<job> --lang fr [--accent "#6B1E2E"] [--heading-font serif] [--photo P]
-      render.py cv (+docx) -> check -> letter, one summary line per step; exit code of the first failure.
+      render.py cv (+docx) -> check -> letter (+docx), one summary line per step; exit code of the first failure.
+      Folder layout: cv.pdf, cv.docx, cover-letter.pdf, cover-letter.docx and notes.md at the root;
+      job.json, tailored.json, letter.json and the HTML in <dir>/_work/.
   pipeline.py report --run D/runs/DAY
       The numbers for the run report, as one JSON object.
   pipeline.py --self-test
@@ -267,7 +269,7 @@ def collect(a):
     for s in sel:
         j = jobs[s["id"]]
         d = run / ("%s-%s" % (slug(j.get("company")), slug(j.get("title"))))
-        save(d / "job.json", dict(j, score=s["score"], lang=s.get("lang", "en"), why=s.get("why", ""),
+        save(d / "_work" / "job.json", dict(j, score=s["score"], lang=s.get("lang", "en"), why=s.get("why", ""),
                                   matched=s.get("matched", []), gaps=s.get("gaps", [])))
         folders.append(str(d))
     save(run / "selected.json", [{"id": s["id"], "dir": f} for s, f in zip(sel, folders)])
@@ -354,7 +356,8 @@ def factcheck(profile, profile_md, tailored, letter, job=None):
 def do_factcheck(a):
     d = Path(a.dir)
     md = Path(a.profile_md).read_text(encoding="utf-8") if a.profile_md and Path(a.profile_md).is_file() else ""
-    probs, warns = factcheck(load(a.profile), md, load(d / "tailored.json"), load(d / "letter.json", {}), load(d / "job.json", {}))
+    w = d / "_work"
+    probs, warns = factcheck(load(a.profile), md, load(w / "tailored.json"), load(w / "letter.json", {}), load(w / "job.json", {}))
     print("\n".join(["ERROR " + p for p in probs] + ["CHECK " + w for w in warns]) or "factcheck OK")
     return 8 if probs else 0
 
@@ -362,11 +365,12 @@ def do_factcheck(a):
 # ---------------------------------------------------------------- render-all
 def render_all(a):
     d, R = Path(a.dir), [sys.executable, str(HERE / "render.py")]
+    w = d / "_work"  # inputs and HTML; the root keeps only what the user sends (PDF, DOCX) and notes.md
     design = ["--accent", a.accent, "--heading-font", a.heading_font] + (["--photo", a.photo] if a.photo else [])
-    steps = [("cv", R + ["cv", "--profile", str(d / "tailored.json"), "--lang", a.lang, "--out", str(d / "cv.pdf")] + design + ["--docx"]),
-             ("check", R + ["check", "--pdf", str(d / "cv.pdf"), "--docx", str(d / "cv.docx"), "--profile", str(d / "tailored.json"),
+    steps = [("cv", R + ["cv", "--profile", str(w / "tailored.json"), "--lang", a.lang, "--out", str(d / "cv.pdf")] + design + ["--docx"]),
+             ("check", R + ["check", "--pdf", str(d / "cv.pdf"), "--docx", str(d / "cv.docx"), "--profile", str(w / "tailored.json"),
                             "--lang", a.lang, "--keywords-file", str(d / "notes.md")]),
-             ("letter", R + ["letter", "--profile", str(d / "tailored.json"), "--letter", str(d / "letter.json"),
+             ("letter", R + ["letter", "--profile", str(w / "tailored.json"), "--letter", str(w / "letter.json"),
                              "--lang", a.lang, "--out", str(d / "cover-letter.pdf")])]
     for name, cmd in steps:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
@@ -449,7 +453,7 @@ def self_test():
             assert collect(argparse.Namespace(run=str(run), settings=str(sp))) == 0
         sc = load(run / "scores.json")
         assert sc[0]["id"] == "c1" and sc[0]["score"] == 80 and sc[0]["base"] == 70, sc
-        assert (run / "acme-ai-engineer" / "job.json").is_file() and "⭐" in (run / "shortlist.md").read_text(encoding="utf-8")
+        assert (run / "acme-ai-engineer" / "_work" / "job.json").is_file() and "⭐" in (run / "shortlist.md").read_text(encoding="utf-8")
         r = report(run)
         assert r["scored"] == 2 and r["auto_zero"] == 1 and len(r["selected"]) == 1, r
         js, st = Path(t) / "JOB_SEARCH.md", Path(t) / "state" / "settings.json"

@@ -11,7 +11,7 @@ Python 3.10+, standard library only (plus Google Chrome for PDFs):
 The DOCX always uses the plain ats layout. **bold** markers are stripped everywhere except elegant.
 
 Inputs are JSON. A .yaml/.yml input is accepted only if PyYAML is importable (else exit 2).
-Writes <out>.html next to the PDF. Env CHROME overrides the Chrome binary.
+Writes the intermediate HTML to <out dir>/_work/; the letter is also written as <out>.docx. Env CHROME overrides the Chrome binary.
 Exit 2 = input not JSON, 3 (and "PAGES=<n>" on stderr) = CV longer than one page, 4 = no Chrome,
 5 = unparseable date (stderr "DATE? <value>"), 6 = `check` failed.
 """
@@ -409,9 +409,23 @@ def _run(text, style):
     return f'<w:r>{f"<w:rPr>{rpr}</w:rPr>" if rpr else ""}<w:t xml:space="preserve">{_x(text)}</w:t></w:r>'
 
 
-def build_docx(p, lang, path):
+def letter_blocks(p, letter, lang):
+    """The cover letter as the same block list the DOCX writer takes."""
+    c, L = p.get("contact") or {}, LABELS[lang]
+    city = c["location"].split(",")[0] + ", " if c.get("location") else ""
+    B = [("name", p.get("name", "")),
+         ("p", [(" | ".join(c[k] for k in ("email", "phone", "location", "linkedin", "github") if c.get(k)), "")]),
+         ("p", [(city + letter.get("date", ""), "")])]
+    if letter.get("company"):
+        B.append(("p", [(letter["company"], "b")]))
+    B += [("p", [("%s : %s" % (L["subject"], letter.get("subject", "")), "b")]), ("p", [(letter.get("greeting", ""), "")])]
+    B += [("p", [(x, "")]) for x in letter.get("paragraphs") or []]
+    return B + [("p", [(letter.get("closing", ""), "")]), ("p", [(p.get("name", ""), "b")])]
+
+
+def build_docx(p, lang, path, blocks=None):
     body = ""
-    for k, v in ats_blocks(p, lang):
+    for k, v in (blocks if blocks is not None else ats_blocks(p, lang)):
         if k == "name":
             body += f'<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr>{_run(v, "")}</w:p>'
         elif k == "h2":
@@ -774,6 +788,8 @@ def extract_pdf(pdf, expected, use_pdftotext=True):
     n = lambda s: len(re.sub(r"\s", "", fold(s)))
     if n(text) < 0.5 * n(expected):
         html = Path(pdf).with_suffix(".html")
+        if not html.is_file():
+            html = Path(pdf).parent / "_work" / html.name
         if html.is_file():
             return _html_text(html), "html-fallback"
     return text, src
@@ -843,6 +859,11 @@ def self_test():
             R = run_checks(t, p, lang, ["python", "sql", "kubernetes"])
             ok(not R["headings_missing"] and not R["dates_missing"] and not R["titles_missing"], f"docx order {lang}: {R}")
             ok(R["name"] and R["email"] and R["phone"] and R["keyword_pct"] == 66.7 and not R["pass"], f"docx check {lang}: {R}")
+            lf = Path(d) / "l.docx"
+            build_docx(p, lang, lf, letter_blocks(p, {"subject": "AI Engineer", "greeting": "Madame,", "paragraphs": ["Para one.", "Para two."],
+                                                     "closing": "Cordialement,", "date": "1 dec"}, lang))
+            lt = docx_text(lf)
+            ok("Para one." in lt and "Para two." in lt and "AI Engineer" in lt and p["name"] in lt.splitlines()[0], f"letter docx {lang}: {lt[:200]}")
             hs = [l for l in t.splitlines() if l in ATS_H[lang].values()]
             ok(hs == [v for k, v in ats_blocks(p, lang) if k == "h2"], f"docx heading order {lang}: {hs}")
     p = prep(json.loads(schema.read_text(encoding="utf-8")), "en")
@@ -936,13 +957,19 @@ def main():
 
     chrome = find_chrome()
     out = Path(args.out).resolve()
-    html = out.with_suffix(".html")
+    work = out.parent / "_work"  # intermediates (HTML) out of the user's way; PDFs and DOCX stay at the root
+    work.mkdir(exist_ok=True)
+    html = work / (out.stem + ".html")
     html.write_text(doc, encoding="utf-8")
     subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
                     f"--print-to-pdf={out}", html.as_uri()], check=True, capture_output=True)
     scrub_pdf_info(out)
     if args.kind == "cv" and args.docx:
         build_docx(deep(p, unbold), args.lang, out.with_suffix(".docx"))
+        print(f"{out.with_suffix('.docx')}")
+    if args.kind == "letter":
+        lp = prep(p, args.lang, dates=False)
+        build_docx(lp, args.lang, out.with_suffix(".docx"), letter_blocks(lp, deep(load(args.letter), letter_plain), args.lang))
         print(f"{out.with_suffix('.docx')}")
     pages = len(re.findall(rb"/Type\s*/Page\b(?!s)", out.read_bytes()))
     print(f"{out} pages={pages}")

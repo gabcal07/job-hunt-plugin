@@ -267,13 +267,15 @@ def keyword_groups(cfg):
     ML/machine learning, engineer/ingenieur). Queries left with no words are ignored."""
     groups = []
     for s in cfg.get("searches", []):
-        q = norm(s["query"])
-        for c in cfg.get("target_companies", []):
-            q = q.replace(norm(c), " ")
-        q = q.replace("machine learning", "ml")
-        words = [w for w in re.findall(r"\w+", q) if w not in CONTRACT_WORDS]
-        if words:
-            groups.append(words)
+        # "(AI engineer) OR (data engineer)" is several titles: each parenthesised part is its own group
+        for q in re.findall(r"\(([^()]*)\)", s["query"]) or [s["query"]]:
+            q = norm(q)
+            for c in cfg.get("target_companies", []):
+                q = q.replace(norm(c), " ")
+            q = q.replace("machine learning", "ml")
+            words = [w for w in re.findall(r"\w+", q) if w not in CONTRACT_WORDS and w != "or"]
+            if words and words not in groups:
+                groups.append(words)
     return groups
 
 
@@ -498,6 +500,9 @@ def self_test():
     assert not keep("Sales Manager")
     assert not keep("Data Engineer", company="BadCo Inc")
     assert not keep("Staff AI Engineer")
+    g = keyword_groups({"searches": [{"query": "(AI engineer) OR (machine learning engineer VIE)"}], "target_companies": []})
+    assert g == [["ai", "engineer"], ["ml", "engineer"]], g
+    assert title_ok("Machine Learning Engineer - Paris", g) and not title_ok("Data Analyst", g)
     print("self-test OK")
 
 

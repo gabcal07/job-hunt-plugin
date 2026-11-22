@@ -128,15 +128,17 @@ def linkedin_job(it):
 
 # ---------------------------------------------------------------- Welcome to the Jungle
 def wttj_job(it):
-    url = it.get("url") or it.get("publicUrl") or ""
-    org = it.get("organization") or it.get("company") or {}
-    loc = it.get("location") or it.get("office") or {}
-    loc = ", ".join(x for x in (loc.get("city"), loc.get("country")) if x) if isinstance(loc, dict) else str(loc)
-    desc = " ".join(str(it.get(k) or "") for k in ("description", "profile", "candidateProfile")).split()
-    return {"id": "wttj:" + str(it.get("id") or it.get("reference") or url), "url": url, "title": it.get("name") or it.get("title") or "",
-            "company": org.get("name", "") if isinstance(org, dict) else str(org), "location": loc,
-            "posted": str(it.get("publishedAt") or it.get("published_at") or "")[:10], "description": " ".join(desc),
-            "employment_type": str(it.get("contractType") or ""), "source": "wttj", "via": "apify"}
+    """Field names as the actor returns them (checked 2026-11-22): publicUrl, published_at, office{city,country},
+    organization{name}, description_text + profile_text, contract_type, reference/objectID."""
+    org = it.get("organization") or {}
+    off = it.get("office") or {}
+    loc = ", ".join(x for x in (off.get("city"), off.get("country")) if x) if isinstance(off, dict) else str(off)
+    desc = " ".join((str(it.get("description_text") or it.get("description_markdown") or "") + " "
+                     + str(it.get("profile_text") or "")).split())
+    return {"id": "wttj:" + str(it.get("reference") or it.get("objectID") or it.get("slug")), "url": it.get("publicUrl") or "",
+            "title": it.get("name") or "", "company": org.get("name", "") if isinstance(org, dict) else str(org),
+            "location": loc, "posted": str(it.get("published_at") or "")[:10], "description": desc,
+            "employment_type": str(it.get("contract_type") or ""), "source": "wttj", "via": "apify"}
 
 
 def french_cities(cfg):
@@ -150,6 +152,7 @@ def french_cities(cfg):
 
 def run_wttj(a):
     from linkedin_search import job_key  # noqa: E402
+    from careers import excluded  # noqa: E402  same exclude-word and exclude-company rule as the careers feeds
     cfg = json.load(open(a.settings, encoding="utf-8"))
     seen = json.load(open(a.seen, encoding="utf-8")) if a.seen and os.path.exists(a.seen) else {}
     res = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "jobs": [], "note": ""}
@@ -162,15 +165,18 @@ def run_wttj(a):
             cli.check_budget()
             titles = list(dict.fromkeys(g for s in cfg["searches"] for g in title_groups(s["query"])))
             per = cfg.get("apify_per_search", 15)
+            got = set()
             for city in cities:
-                inp = {"action": "get-jobs", "query": " OR ".join(titles), "searchInTitleOnly": True, "countryCode": "FR",
-                       "city": city, "postedWithinDays": 3 if date.today().weekday() == 0 else 1, "includeDetails": True,
-                       "maxItems": per}
-                for it in cli.run(WTTJ_ACTOR, inp, per):
-                    j = wttj_job(it)
-                    if j["id"] in seen or job_key(j["company"], j["title"]) in seen:
-                        continue
-                    res["jobs"].append(j)
+                for title in titles:  # WTTJ's search doesn't understand "A OR B": one query per title
+                    inp = {"action": "get-jobs", "query": title, "searchInTitleOnly": True, "countryCode": "FR", "city": city,
+                           "postedWithinDays": 7, "includeDetails": True, "maxItems": per}
+                    for it in cli.run(WTTJ_ACTOR, inp, per):
+                        j = wttj_job(it)
+                        if (j["id"] in got or j["id"] in seen or job_key(j["company"], j["title"]) in seen
+                                or excluded(j, cfg)):
+                            continue
+                        got.add(j["id"])
+                        res["jobs"].append(j)
         except ApifyUnavailable as e:
             res["note"] = "stopped: %s" % e
     if a.seen and not a.dry_run and res["jobs"]:
@@ -235,10 +241,12 @@ def self_test():
                       "description": "Build\n  agents", "applicationsCount": 42, "experienceLevel": "Entry level"})
     assert j["url"].endswith("4450285827") and j["posted"] == "2026-11-21" and j["description"] == "Build agents"
     assert j["applicants"] == "42 applicants" and j["seniority"] == "Entry level" and j["via"] == "apify"
-    w = wttj_job({"id": 7, "url": "https://www.welcometothejungle.com/fr/companies/x/jobs/y", "name": "Data Engineer",
-                  "organization": {"name": "Acme"}, "office": {"city": "Paris", "country": "France"}, "description": "Python",
-                  "publishedAt": "2026-11-22T08:00:00Z"})
-    assert w["id"] == "wttj:7" and w["company"] == "Acme" and w["location"] == "Paris, France" and w["posted"] == "2026-11-22"
+    w = wttj_job({"reference": "GALAD_9K", "publicUrl": "https://www.welcometothejungle.com/fr/companies/x/jobs/y", "name": "AI Engineer",
+                  "organization": {"name": "Galadrim"}, "office": {"city": "Paris", "country": "France"},
+                  "description_text": "Notre équipe", "profile_text": "Python", "published_at": "2026-11-22T09:00:02Z",
+                  "contract_type": "full_time"})
+    assert w["id"] == "wttj:GALAD_9K" and w["company"] == "Galadrim" and w["location"] == "Paris, France", w
+    assert w["posted"] == "2026-11-22" and w["description"] == "Notre équipe Python" and w["url"].startswith("https://www.wel"), w
     assert french_cities({"searches": [{"location": "Paris, Île-de-France, France"}, {"location": "Seoul, South Korea"},
                                        {"location": "Paris, Île-de-France, France"}]}) == ["Paris"]
     os.environ.pop("APIFY_TOKEN", None)

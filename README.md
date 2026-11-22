@@ -4,7 +4,7 @@ Your daily job search, done for you by Claude.
 
 ## What it does
 
-- Searches LinkedIn every day for the kind of job you want, plus the careers sites of the companies you choose to watch.
+- Searches LinkedIn every day for the kind of job you want, plus the careers sites of the companies you choose to watch. That includes Google, Microsoft, IBM, Naver and SAP, read from their public job feeds. SAP offers come as links only, because the site blocks automated reading.
 - Matches each offer to your profile and keeps the best ones in a short list.
 - Writes a tailored one-page CV and cover letter for each top offer (the CV as PDF and Word DOCX, the letter as PDF). The PDF CV uses a clean single-column design (accent colour picked for the sector, optional photo, bold key results) that applicant tracking systems (ATS) still read reliably; the DOCX keeps a plain layout for portals like Workday. The cover letter is edited to remove stock AI phrasing, without adding anything that isn't in your profile.
 
@@ -62,7 +62,14 @@ Bundled, unmodified, under its MIT licence: [humanizer](https://github.com/blade
 
 ## Optional: Apify (free) for more reliable LinkedIn results
 
-LinkedIn limits how many offers one internet connection can read per day, and it limits a VPN or office network even more. With a free [Apify](https://apify.com) account, the daily search reads LinkedIn through Apify's servers instead. Every offer then comes with its full description, and Welcome to the Jungle is added for cities in France.
+LinkedIn limits how many offers one internet connection can read per day, and it limits a VPN or office network even more. With a free [Apify](https://apify.com) account, the daily search reads LinkedIn through Apify's servers instead:
+
+- It finds every offer from the **last week** that you haven't already seen, so a day the app was closed is still covered.
+- Every offer comes with its full description, instead of only the 20 best-ranked ones.
+- Nothing is read from your own connection, so LinkedIn's limits and VPN blocks don't apply.
+- **Welcome to the Jungle** is added for cities in France.
+
+A typical run takes 3 to 5 minutes. In one test it found 32 new offers.
 
 1. Create a free account at apify.com. No credit card is needed.
 2. Copy your API token from **Settings → API & Integrations**.
@@ -70,7 +77,7 @@ LinkedIn limits how many offers one internet connection can read per day, and it
 
 **Cost:**
 - The free plan gives $5 of credit a month.
-- One offer costs $0.0004, so a typical day of about 90 offers costs about 4 cents.
+- One offer costs $0.0004. Offers you've already seen are skipped before they're fetched, so you never pay twice for the same one. A typical day costs 1 to 4 cents, about $1–2 a month.
 - The plugin stops using Apify at $4.50 a month and goes back to reading LinkedIn directly, so you're never charged.
 - To change how many offers each search fetches, set `Apify offers per search` in `JOB_SEARCH.md`.
 

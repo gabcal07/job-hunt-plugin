@@ -288,9 +288,8 @@ def run_apify(a, cfg, specs, seen):
     for s in specs:
         why = s.get("why") or s["query"]
         terms[why] = terms.get(why, []) + title_terms(s["query"])
-        # the actor offers 24 h, a week or a month: anything over 24 h (incl. Monday's 72 h) asks for a week;
-        # skipJobId and seen.json keep already-seen jobs out
-        tpr = "r86400" if hours(s.get("posted_within_hours") or 24) <= 24 else "r604800"
+        # always the last week: skipJobId keeps seen jobs out (not fetched, not charged), so a missed day is still covered
+        tpr = "r604800"
         items = cli.run(apify.LINKEDIN_ACTOR, apify.linkedin_input(s, per, a.exclude_keyword, skip, tpr), per, apify.LINKEDIN_FIELDS)
         kept = []
         for it in items:

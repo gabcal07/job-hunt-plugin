@@ -1,11 +1,14 @@
 """Render the CV or a cover letter to PDF (stdlib HTML -> headless Chrome). No installs needed.
 
 Python 3.10+, standard library only (plus Google Chrome for PDFs):
-  python3 scripts/render.py cv --profile P.json --lang fr --out cv.pdf [--design ats|classic] [--docx] [--photo photo.jpg]
+  python3 scripts/render.py cv --profile P.json --lang fr --out cv.pdf [--design elegant|ats|classic] [--docx] [--photo photo.jpg]
+      [--accent "#6B1E2E"] [--heading-font serif|sans]
   python3 scripts/render.py letter --profile P.json --letter L.json --lang fr --out letter.pdf
   python3 scripts/render.py check --pdf cv.pdf [--docx cv.docx] --profile P.json --lang fr [--keywords a,b | --keywords-file notes.md] [--json]
   python3 scripts/render.py --self-test
---design ats (default) is a single-column, ATS-safe layout (no photo, ignored with a note); classic is the sidebar design.
+--design elegant (default) is single column with an accent colour, optional round photo, a 4-column skills grid and
+**bold** results; ats is the plain single-column layout (no photo); classic is the two-column sidebar design.
+The DOCX always uses the plain ats layout. **bold** markers are stripped everywhere except elegant.
 
 Inputs are JSON. A .yaml/.yml input is accepted only if PyYAML is importable (else exit 2).
 Writes <out>.html next to the PDF. Env CHROME overrides the Chrome binary.
@@ -323,6 +326,73 @@ def ats_html(p, lang):
         else:
             s += ul(v) + "\n"
     return page(lang, f'{p.get("name", "")} - CV', (ASSETS / "ats.css").read_text(encoding="utf-8"), s)
+
+
+# ---------------------------------------------------------------- elegant: single column, accent colour, optional photo
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+
+
+def unbold(s):
+    """Drop **bold** markers (ats/classic/docx); elegant renders them as <b>."""
+    return _BOLD.sub(r"\1", s) if isinstance(s, str) else s
+
+
+def rich(s):
+    return _BOLD.sub(r"<b>\1</b>", e(str(s)))
+
+
+def tint(hex_, k=.75):
+    """Mix a #rrggbb colour with white, for the thin rules."""
+    r, g, b = (int(hex_[i:i + 2], 16) for i in (1, 3, 5))
+    return "#" + "".join(f"{round(v + (255 - v) * k):02x}" for v in (r, g, b))
+
+
+def elegant_html(p, lang, photo_uri="", accent="#1F3A5F", serif=True):
+    H, c = ATS_H[lang], p.get("contact") or {}
+    link = lambda url, label: f'<a href="{e(url if url.startswith("http") else "https://" + url)}">{e(label)}</a>'
+    s = '<div class="head"><div>\n' + f'<h1>{e(p.get("name", ""))}</h1>\n'
+    if p.get("headline"):
+        s += f'<div class="headline">{e(p["headline"])}</div>\n'
+    s += '<div class="contact">' + " · ".join(e(c[k]) for k in ("email", "phone", "location") if c.get(k))
+    links = [link(c[k], lbl) for k, lbl in (("linkedin", "Profil LinkedIn" if lang == "fr" else "LinkedIn profile"),
+                                            ("github", "GitHub")) if c.get(k)]
+    s += ("<br>" + " · ".join(links) if links else "") + "</div>\n</div>\n"
+    if photo_uri:
+        s += f'<img class="photo" src="{e(photo_uri)}" alt="">\n'
+    s += "</div>\n"
+    if p.get("summary"):
+        s += f'<h2>{e(H["summary"])}</h2>\n<p>{rich(p["summary"])}</p>\n'
+
+    def entries(key, org_keys, date_key):
+        out = ""
+        for x in p.get(key) or []:
+            t = e(x.get("title", ""))
+            if x.get("url"):
+                t = link(x["url"], x.get("title", ""))
+            org = ", ".join(x[k] for k in org_keys if x.get(k))
+            out += (f'<div class="entry"><div class="row"><span>{t}</span><span class="d">{e(x.get(date_key, ""))}</span></div>\n'
+                    + (f'<div class="org">{e(org)}</div>\n' if org else "")
+                    + ("<ul>" + "".join(f"<li>{rich(b)}</li>" for b in x["bullets"]) + "</ul>" if x.get("bullets") else "")
+                    + "</div>\n")
+        return out
+    for key, org_keys, date_key, h in (("experience", ("company", "location"), "dates", "work"),
+                                       ("education", ("school", "location"), "dates", "education"),
+                                       ("projects", (), "date", "projects")):
+        if p.get(key):
+            s += f'<h2>{e(H[h])}</h2>\n' + entries(key, org_keys, date_key)
+    if p.get("skills"):
+        s += f'<h2>{e(H["skills"])}</h2>\n<div class="cols">' + "".join(
+            f"<div><b>{e(g)}</b>{ul(items)}</div>" for g, items in p["skills"].items()) + "</div>\n"
+    if p.get("languages"):
+        s += f'<h2>{e(H["languages"])}</h2>\n<p>' + " · ".join(
+            e(f'{x.get("name", "")} ({x["level"]})' if x.get("level") else x.get("name", "")) for x in p["languages"]) + "</p>\n"
+    if p.get("certifications"):
+        s += f'<h2>{e(H["certifications"])}</h2>\n{ul(p["certifications"])}\n'
+    if p.get("hobbies"):
+        s += f'<h2>{e(LABELS[lang]["hobbies"])}</h2>\n<p>' + " · ".join(e(h) for h in p["hobbies"]) + "</p>\n"
+    hfont = "Georgia, 'DejaVu Serif', serif" if serif else "Calibri, Carlito, 'Helvetica Neue', Arial, sans-serif"
+    css = f":root {{ --accent: {accent}; --accent-light: {tint(accent)}; --hfont: {hfont}; }}\n"
+    return page(lang, f'{p.get("name", "")} - CV', css + (ASSETS / "elegant.css").read_text(encoding="utf-8"), s)
 
 
 # ---------------------------------------------------------------- DOCX (WordprocessingML via zipfile)
@@ -710,7 +780,7 @@ def extract_pdf(pdf, expected, use_pdftotext=True):
 
 
 def do_check(args):
-    p = prep(load(args.profile), args.lang)
+    p = deep(prep(load(args.profile), args.lang), unbold)
     kws = [k.strip() for k in args.keywords.split(",")] if args.keywords else read_keywords(args.keywords_file) if args.keywords_file else []
     expected = ats_text(ats_blocks(p, args.lang))
     sources = {}
@@ -782,6 +852,18 @@ def self_test():
     R = run_checks(bad, p, "en")
     ok(not R["pass"] and R["headings_missing"] == ["Education"] and R["dates_missing"], "check must flag missing heading/date")
     ok(not run_checks("\n" * 500 + txt, p, "en")["pass"], "name must be within the first 400 chars")
+    ok(unbold("Grew **+40%** reach") == "Grew +40% reach" and rich("a **<b>** c") == "a <b>&lt;b&gt;</b> c", "bold markers")
+    ok(tint("#000000", .5) == "#808080", "tint")
+    for lang in ("en", "fr"):
+        p = prep(json.loads(schema.read_text(encoding="utf-8")), lang)
+        p["experience"][0]["bullets"] = ["Built a pipeline loading **2M rows** a day"]
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "t.html"
+            f.write_text(elegant_html(p, lang, accent="#6B1E2E"), encoding="utf-8")
+            t = _html_text(f)
+            ok("**" not in t and "<b>2M rows</b>" in f.read_text(encoding="utf-8"), f"elegant bold {lang}")
+            R = run_checks(t, deep(p, unbold), lang, ["python"])
+            ok(R["pass"], f"elegant check {lang}: {R}")
     # PDF: metadata scrub (escaped paren) + extractor on a synthetic Chrome-like file
     cm = (b"/CIDInit /ProcSet findresource begin begincmap 1 begincodespacerange <0000> <FFFF> endcodespacerange "
           b"2 beginbfchar <0001> <0048> <0002> <00E9> endbfchar 1 beginbfrange <0003> <0005> <0069> endbfrange endcmap")
@@ -815,7 +897,9 @@ def main():
     a.add_argument("--lang", default="en", choices=list(LABELS))
     a.add_argument("--out")
     a.add_argument("--photo", default="")
-    a.add_argument("--design", default="ats", choices=["ats", "classic"])
+    a.add_argument("--design", default="elegant", choices=["elegant", "ats", "classic"])
+    a.add_argument("--accent", default="#1F3A5F", help="elegant: accent colour for name, headings, rules")
+    a.add_argument("--heading-font", default="serif", choices=["serif", "sans"], help="elegant: heading font")
     a.add_argument("--docx", nargs="?", const=True, default=False,
                    help="cv: flag, also write <out>.docx; check: path of the .docx to check")
     a.add_argument("--pdf")
@@ -832,13 +916,19 @@ def main():
     p = load(args.profile)
     if args.kind == "cv":
         p = prep(p, args.lang)
-        if args.design == "ats":
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", args.accent):
+            a.error("--accent must look like #1F3A5F")
+        photo_uri = Path(args.photo).resolve().as_uri() if args.photo and Path(args.photo).is_file() else ""
+        if args.photo and not photo_uri:
+            print(f"note: photo not found: {args.photo}", file=sys.stderr)
+        if args.design == "elegant":
+            doc = elegant_html(p, args.lang, photo_uri, args.accent, args.heading_font == "serif")
+        elif args.design == "ats":
             if args.photo:
                 print("note: the ats design has no photo; --photo ignored", file=sys.stderr)
-            doc = ats_html(p, args.lang)
+            doc = ats_html(deep(p, unbold), args.lang)
         else:
-            photo_uri = Path(args.photo).resolve().as_uri() if args.photo and Path(args.photo).is_file() else ""
-            doc = cv_html(p, args.lang, LABELS[args.lang], photo_uri)
+            doc = cv_html(deep(p, unbold), args.lang, LABELS[args.lang], photo_uri)
     else:
         if not args.letter:
             sys.exit("--letter is required for 'letter'")
@@ -852,7 +942,7 @@ def main():
                     f"--print-to-pdf={out}", html.as_uri()], check=True, capture_output=True)
     scrub_pdf_info(out)
     if args.kind == "cv" and args.docx:
-        build_docx(p, args.lang, out.with_suffix(".docx"))
+        build_docx(deep(p, unbold), args.lang, out.with_suffix(".docx"))
         print(f"{out.with_suffix('.docx')}")
     pages = len(re.findall(rb"/Type\s*/Page\b(?!s)", out.read_bytes()))
     print(f"{out} pages={pages}")

@@ -1,0 +1,25 @@
+/* Single column, real text, no icons: ATS-parseable and pleasant to read. --accent and --hfont are set by render.py. */
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { padding: 11mm 16mm; font-family: Calibri, Carlito, "Helvetica Neue", Arial, sans-serif; font-size: 10pt;
+  line-height: 1.24; color: #222; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 6mm;
+  border-bottom: 1.2pt solid var(--accent); padding-bottom: 3mm; }
+h1 { font-family: var(--hfont); font-size: 22pt; font-weight: normal; color: var(--accent); letter-spacing: .5pt; line-height: 1.1; }
+.headline { font-size: 11.5pt; font-weight: bold; margin: 1.3mm 0; }
+.contact { font-size: 9.6pt; color: #333; }
+.photo { flex: 0 0 24mm; width: 24mm; height: 24mm; border-radius: 50%; object-fit: cover; object-position: 50% 20%;
+  border: 1.6pt solid var(--accent); background: #fff; }
+h2 { font-family: var(--hfont); font-size: 10.5pt; font-weight: normal; letter-spacing: 1.2pt; text-transform: uppercase;
+  color: var(--accent); margin: 3.4mm 0 1.3mm; border-bottom: .6pt solid var(--accent-light); padding-bottom: .7mm; }
+.entry { margin-bottom: 1.9mm; break-inside: avoid; }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: 3mm; font-weight: bold; }
+.row .d { font-weight: normal; color: #444; white-space: nowrap; }
+.org { color: var(--accent); font-style: italic; margin-bottom: .5mm; }
+ul { padding-left: 4.5mm; }
+li { margin-bottom: .7mm; }
+a { color: var(--accent); text-decoration: underline; }
+.cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 4mm; }
+.cols b { display: block; margin-bottom: .5mm; }
+.cols ul { padding-left: 3.6mm; }
+.cols li { margin-bottom: .3mm; }

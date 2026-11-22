@@ -8,7 +8,7 @@
       "name": "job-hunt",
       "source": "./",
       "description": "Daily job search on LinkedIn and the careers sites of companies you watch, with a tailored CV and cover letter for the best offers.",
-      "version": "0.7.0"
+      "version": "0.8.0"
     }
   ]
 }
